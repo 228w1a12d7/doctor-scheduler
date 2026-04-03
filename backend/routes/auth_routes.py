@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from auth import create_access_token, hash_password, verify_password
+from auth import create_access_token, get_current_user, hash_password, verify_password
 from database import get_db
 from models import Patient, User
 from schemas import LoginRequest, SignupRequest
@@ -58,11 +58,37 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
 
+    # Fetch patient_id if user is a patient
+    patient_id = None
+    if user.role.lower() == "patient":
+        patient = db.query(Patient).filter(Patient.name == user.name).first()
+        if patient:
+            patient_id = patient.id
+
     return {
         "token": token,
         "user": {
             "id": user.id,
             "name": user.name,
             "role": user.role,
+            "patient_id": patient_id,
         },
+    }
+
+
+@router.get("/me")
+def get_current_user_info(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Get current logged-in user info including patient_id"""
+    patient_id = None
+    if user.role.lower() == "patient":
+        patient = db.query(Patient).filter(Patient.name == user.name).first()
+        if patient:
+            patient_id = patient.id
+    
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "role": user.role,
+        "patient_id": patient_id,
     }
