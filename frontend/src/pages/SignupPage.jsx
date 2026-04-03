@@ -151,7 +151,7 @@ function SignupPage() {
           <p className="text-sm text-slate-600">
             Already have an account?
             {' '}
-            <Link to="/login" className="font-semibold text-orange-700 hover:text-orange-900">
+            <Link to="/signin" className="font-semibold text-orange-700 hover:text-orange-900">
               Go to login
             </Link>
           </p>

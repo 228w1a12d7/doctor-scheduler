@@ -7,6 +7,10 @@ function MappingPage() {
   const [doctors, setDoctors] = useState([])
   const [clinics, setClinics] = useState([])
   const [mappings, setMappings] = useState([])
+  const [filters, setFilters] = useState({
+    doctor_id: '',
+    clinic_id: '',
+  })
   const [form, setForm] = useState({
     doctor_id: '',
     clinic_id: '',
@@ -66,6 +70,19 @@ function MappingPage() {
     [mappings, doctors, clinics],
   )
 
+  const filteredMappedRows = useMemo(
+    () =>
+      mappedRows.filter((row) => {
+        const doctorMatches =
+          !filters.doctor_id || String(row.doctor_id) === String(filters.doctor_id)
+        const clinicMatches =
+          !filters.clinic_id || String(row.clinic_id) === String(filters.clinic_id)
+
+        return doctorMatches && clinicMatches
+      }),
+    [mappedRows, filters],
+  )
+
   const handleSubmit = async (event) => {
     event.preventDefault()
     setError('')
@@ -92,7 +109,7 @@ function MappingPage() {
     <section>
       <PageHeader
         title="Doctor-Clinic Mapping"
-        subtitle="Assign doctors to clinics using the exact payload: doctor_id and clinic_id."
+        subtitle="Mapping decides where a doctor can practice. Availability decides when that doctor is available at the mapped clinic."
       />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
@@ -173,6 +190,57 @@ function MappingPage() {
           <h3 className="text-xl font-semibold">Mapped Doctors</h3>
           <p className="mt-1 text-sm text-slate-600">Response shape: {'{ message: "Doctor mapped to clinic" }'}</p>
 
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+            <select
+              value={filters.doctor_id}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  doctor_id: event.target.value,
+                }))
+              }
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-teal-500"
+            >
+              <option value="">Filter by doctor</option>
+              {doctors.map((doctor) => (
+                <option key={doctor.id} value={doctor.id}>
+                  {doctor.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={filters.clinic_id}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  clinic_id: event.target.value,
+                }))
+              }
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-teal-500"
+            >
+              <option value="">Filter by clinic</option>
+              {clinics.map((clinic) => (
+                <option key={clinic.id} value={clinic.id}>
+                  {clinic.name}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={() =>
+                setFilters({
+                  doctor_id: '',
+                  clinic_id: '',
+                })
+              }
+              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-teal-500 hover:text-teal-700"
+            >
+              Clear
+            </button>
+          </div>
+
           {isLoading ? (
             <p className="mt-4 text-sm text-slate-500">Loading mapping list...</p>
           ) : (
@@ -186,15 +254,23 @@ function MappingPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {mappedRows.map((row, index) => (
-                    <tr key={`${row.doctor_id}-${row.clinic_id}-${index}`} className="rounded-xl bg-slate-50">
-                      <td className="px-3 py-3 font-semibold text-slate-800">{row.doctorName}</td>
-                      <td className="px-3 py-3 text-slate-700">{row.clinicName}</td>
-                      <td className="px-3 py-3 text-xs text-slate-500">
-                        doctor_id: {row.doctor_id}, clinic_id: {row.clinic_id}
+                  {filteredMappedRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-4 text-sm text-slate-500">
+                        No mappings match current filters.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    filteredMappedRows.map((row, index) => (
+                      <tr key={`${row.doctor_id}-${row.clinic_id}-${index}`} className="rounded-xl bg-slate-50">
+                        <td className="px-3 py-3 font-semibold text-slate-800">{row.doctorName}</td>
+                        <td className="px-3 py-3 text-slate-700">{row.clinicName}</td>
+                        <td className="px-3 py-3 text-xs text-slate-500">
+                          doctor_id: {row.doctor_id}, clinic_id: {row.clinic_id}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

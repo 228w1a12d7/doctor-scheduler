@@ -53,7 +53,7 @@ function LoginPage() {
           <p className="mt-3 text-sm text-teal-100 sm:text-base">
             Login response shape:
             {' '}
-            {`{ token, user: { id, name, role } }`}
+            {`{ token, user: { id, name, role, patient_id } }`}
           </p>
           <div className="mt-6 space-y-2 text-sm text-teal-100">
             <p>Patient demo: sree@gmail.com / 123456</p>

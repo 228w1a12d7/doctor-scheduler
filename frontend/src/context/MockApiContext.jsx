@@ -1,182 +1,65 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import {
-  APPOINTMENT_STATUSES,
-  PLACEHOLDER_IMAGE,
-  WEEK_DAYS,
-} from '../constants/appConstants.js'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
 const MockApiContext = createContext(null)
 const AUTH_STORAGE_KEY = 'doctor_scheduler_auth'
+const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
+const API_BASE_URLS = configuredApiBaseUrl
+  ? [configuredApiBaseUrl.replace(/\/+$/, '')]
+  : ['http://127.0.0.1:8001', 'http://127.0.0.1:8000']
 
-const initialUsers = [
-  {
-    id: 1,
-    name: 'Sree',
-    email: 'sree@gmail.com',
-    password: '123456',
-    role: 'patient',
-  },
-  {
-    id: 2,
-    name: 'Admin User',
-    email: 'admin@hospital.com',
-    password: 'admin123',
-    role: 'admin',
-  },
-]
+const getErrorMessage = async (response) => {
+  const fallback = `Request failed (${response.status})`
 
-const initialDoctors = [
-  {
-    id: 1,
-    name: 'Dr Ravi',
-    speciality: 'Cardiology',
-    image: PLACEHOLDER_IMAGE,
-  },
-  {
-    id: 2,
-    name: 'Dr Maya',
-    speciality: 'Dermatology',
-    image: PLACEHOLDER_IMAGE,
-  },
-]
+  try {
+    const data = await response.json()
 
-const initialClinics = [
-  {
-    id: 1,
-    name: 'City Clinic',
-    location: 'Hyderabad',
-    image: PLACEHOLDER_IMAGE,
-  },
-  {
-    id: 2,
-    name: 'Sunrise Care',
-    location: 'Bengaluru',
-    image: PLACEHOLDER_IMAGE,
-  },
-]
+    if (typeof data?.detail === 'string') {
+      return data.detail
+    }
 
-const initialMappings = [
-  {
-    doctor_id: 1,
-    clinic_id: 1,
-  },
-  {
-    doctor_id: 2,
-    clinic_id: 2,
-  },
-]
+    if (Array.isArray(data?.detail) && data.detail.length > 0) {
+      const first = data.detail[0]
+      if (typeof first === 'string') {
+        return first
+      }
+      if (typeof first?.msg === 'string') {
+        return first.msg
+      }
+    }
 
-const initialAvailability = [
-  {
-    doctor_id: 1,
-    clinic_id: 1,
-    day: 'Monday',
-    start_time: '09:00',
-    end_time: '14:00',
-  },
-  {
-    doctor_id: 1,
-    clinic_id: 1,
-    day: 'Wednesday',
-    start_time: '10:00',
-    end_time: '13:00',
-  },
-  {
-    doctor_id: 2,
-    clinic_id: 2,
-    day: 'Friday',
-    start_time: '11:00',
-    end_time: '16:00',
-  },
-]
+    if (typeof data?.message === 'string') {
+      return data.message
+    }
 
-const initialAppointments = [
-  {
-    appointment_id: 101,
-    doctor_id: 1,
-    clinic_id: 1,
-    date: '2026-04-05',
-    time: '10:00',
-    status: 'BOOKED',
-    user_id: 1,
-  },
-]
-
-const dayFromDateIndex = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-]
-
-const withLatency = (value, ms = 250) =>
-  new Promise((resolve) => {
-    window.setTimeout(() => resolve(value), ms)
-  })
-
-const withError = (message, ms = 250) =>
-  new Promise((_, reject) => {
-    window.setTimeout(() => reject(new Error(message)), ms)
-  })
-
-const nextId = (items, key) =>
-  items.reduce((max, item) => Math.max(max, Number(item[key]) || 0), 0) + 1
-
-const toMinutes = (timeValue) => {
-  const [hours, minutes] = timeValue.split(':').map(Number)
-  return hours * 60 + minutes
+    return fallback
+  } catch {
+    return fallback
+  }
 }
 
-const toTime = (minutes) => {
-  const safeMinutes = Math.max(0, minutes)
-  const hrs = String(Math.floor(safeMinutes / 60)).padStart(2, '0')
-  const mins = String(safeMinutes % 60).padStart(2, '0')
-  return `${hrs}:${mins}`
-}
+const buildUrl = (baseUrl, path, query) => {
+  const url = new URL(`${baseUrl}${path}`)
 
-const buildSlots = (startTime, endTime) => {
-  const slots = []
-  const start = toMinutes(startTime)
-  const end = toMinutes(endTime)
+  if (query && typeof query === 'object') {
+    Object.entries(query).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') {
+        return
+      }
 
-  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
-    return slots
+      url.searchParams.set(key, String(value))
+    })
   }
 
-  for (let point = start; point < end; point += 15) {
-    slots.push(toTime(point))
-  }
-
-  return slots
+  return url.toString()
 }
-
-const getDayNameFromDate = (isoDate) => {
-  const parsed = new Date(`${isoDate}T00:00:00`)
-  const day = parsed.getDay()
-
-  if (Number.isNaN(day)) {
-    return ''
-  }
-
-  return dayFromDateIndex[day]
-}
-
-const toApiAppointmentShape = ({ user_id, ...appointment }) => appointment
 
 export function MockApiProvider({ children }) {
-  const [users, setUsers] = useState(initialUsers)
-  const [doctors, setDoctors] = useState(initialDoctors)
-  const [clinics, setClinics] = useState(initialClinics)
-  const [mappings, setMappings] = useState(initialMappings)
-  const [availability, setAvailability] = useState(initialAvailability)
-  const [appointments, setAppointments] = useState(initialAppointments)
   const [auth, setAuth] = useState(() => {
     const stored = localStorage.getItem(AUTH_STORAGE_KEY)
     return stored ? JSON.parse(stored) : null
   })
+  const [mappingCache, setMappingCache] = useState([])
+  const [hasFetchedMappings, setHasFetchedMappings] = useState(false)
 
   useEffect(() => {
     if (auth) {
@@ -187,357 +70,454 @@ export function MockApiProvider({ children }) {
     localStorage.removeItem(AUTH_STORAGE_KEY)
   }, [auth])
 
+  const apiRequest = useCallback(
+    async ({
+      path,
+      method = 'GET',
+      body,
+      query,
+      isFormData = false,
+      authRequired = true,
+    }) => {
+      const headers = {
+        Accept: 'application/json',
+      }
+
+      if (authRequired) {
+        if (!auth?.token) {
+          throw new Error('Please login to continue')
+        }
+        headers.Authorization = `Bearer ${auth.token}`
+      }
+
+      if (!isFormData) {
+        headers['Content-Type'] = 'application/json'
+      }
+
+      const requestBody = isFormData
+        ? body
+        : body !== undefined
+          ? JSON.stringify(body)
+          : undefined
+
+      for (let index = 0; index < API_BASE_URLS.length; index += 1) {
+        const baseUrl = API_BASE_URLS[index]
+
+        try {
+          const response = await fetch(buildUrl(baseUrl, path, query), {
+            method,
+            headers,
+            body: requestBody,
+          })
+
+          if (!response.ok) {
+            throw new Error(await getErrorMessage(response))
+          }
+
+          if (response.status === 204) {
+            return null
+          }
+
+          const text = await response.text()
+          if (!text) {
+            return null
+          }
+
+          return JSON.parse(text)
+        } catch (requestError) {
+          const isNetworkError = requestError instanceof TypeError
+          const hasAnotherCandidate = index < API_BASE_URLS.length - 1
+
+          if (isNetworkError && hasAnotherCandidate) {
+            continue
+          }
+
+          throw requestError
+        }
+      }
+
+      throw new Error('Unable to reach API server')
+    },
+    [auth?.token],
+  )
+
   const currentRole = auth?.user?.role ?? 'patient'
 
-  const signup = async (payload) => {
-    const normalizedEmail = payload.email.trim().toLowerCase()
-    const alreadyExists = users.some(
-      (user) => user.email.toLowerCase() === normalizedEmail,
-    )
+  const signup = useCallback(
+    (payload) =>
+      apiRequest({
+        path: '/auth/signup',
+        method: 'POST',
+        body: payload,
+        authRequired: false,
+      }),
+    [apiRequest],
+  )
 
-    if (alreadyExists) {
-      return withError('Email already registered')
-    }
+  const login = useCallback(
+    async (payload) => {
+      const response = await apiRequest({
+        path: '/auth/login',
+        method: 'POST',
+        body: payload,
+        authRequired: false,
+      })
 
-    const userId = nextId(users, 'id')
-    const newUser = {
-      id: userId,
-      name: payload.name,
-      email: normalizedEmail,
-      password: payload.password,
-      role: payload.role,
-    }
+      setAuth(response)
+      setMappingCache([])
+      setHasFetchedMappings(false)
+      return response
+    },
+    [apiRequest],
+  )
 
-    setUsers((prev) => [...prev, newUser])
+  const fetchCurrentUser = useCallback(async () => {
+    const me = await apiRequest({ path: '/auth/me' })
 
-    return withLatency({
-      user_id: userId,
-      message: 'User registered successfully',
-    })
-  }
+    setAuth((prev) => {
+      if (!prev) {
+        return prev
+      }
 
-  const login = async (payload) => {
-    const normalizedEmail = payload.email.trim().toLowerCase()
-    const user = users.find(
-      (item) =>
-        item.email.toLowerCase() === normalizedEmail &&
-        item.password === payload.password,
-    )
-
-    if (!user) {
-      return withError('Invalid credentials')
-    }
-
-    const response = {
-      token: 'jwt_token',
-      user: {
-        id: user.id,
-        name: user.name,
-        role: user.role,
-      },
-    }
-
-    setAuth(response)
-    return withLatency(response)
-  }
-
-  const logout = () => {
-    setAuth(null)
-  }
-
-  const addDoctor = async (payload) => {
-    if (!payload.image) {
-      return withError('Image is required')
-    }
-
-    const doctorId = nextId(doctors, 'id')
-    const newDoctor = {
-      id: doctorId,
-      name: payload.name,
-      speciality: payload.speciality,
-      image: payload.image,
-    }
-
-    setDoctors((prev) => [...prev, newDoctor])
-
-    return withLatency({
-      id: doctorId,
-      message: 'Doctor added',
-    })
-  }
-
-  const getDoctors = async () => withLatency([...doctors])
-
-  const addClinic = async (payload) => {
-    if (!payload.image) {
-      return withError('Image is required')
-    }
-
-    const clinicId = nextId(clinics, 'id')
-    const newClinic = {
-      id: clinicId,
-      name: payload.name,
-      location: payload.location,
-      image: payload.image,
-    }
-
-    setClinics((prev) => [...prev, newClinic])
-
-    return withLatency({
-      id: clinicId,
-      message: 'Clinic created',
-    })
-  }
-
-  const getClinics = async () => withLatency([...clinics])
-
-  const mapDoctorToClinic = async (payload) => {
-    const doctorId = Number(payload.doctor_id)
-    const clinicId = Number(payload.clinic_id)
-
-    const exists = mappings.some(
-      (item) => item.doctor_id === doctorId && item.clinic_id === clinicId,
-    )
-
-    if (!exists) {
-      setMappings((prev) => [...prev, { doctor_id: doctorId, clinic_id: clinicId }])
-    }
-
-    return withLatency({
-      message: 'Doctor mapped to clinic',
-    })
-  }
-
-  const getMappings = async () => withLatency([...mappings])
-
-  const addAvailability = async (payload) => {
-    const item = {
-      doctor_id: Number(payload.doctor_id),
-      clinic_id: Number(payload.clinic_id),
-      day: payload.day,
-      start_time: payload.start_time,
-      end_time: payload.end_time,
-    }
-
-    if (toMinutes(item.end_time) <= toMinutes(item.start_time)) {
-      return withError('End time must be after start time')
-    }
-
-    setAvailability((prev) => [...prev, item])
-
-    return withLatency({
-      message: 'Availability added',
-    })
-  }
-
-  const getAvailability = async () => {
-    const response = availability.map((item) => {
-      const clinic = clinics.find((entry) => entry.id === item.clinic_id)
       return {
-        clinic: clinic?.name ?? 'Unknown Clinic',
-        day: item.day,
-        start_time: item.start_time,
-        end_time: item.end_time,
+        ...prev,
+        user: {
+          ...prev.user,
+          id: me.id,
+          name: me.name,
+          role: me.role,
+          patient_id: me.patient_id,
+        },
       }
     })
 
-    return withLatency(response)
-  }
+    return me
+  }, [apiRequest])
 
-  const searchDoctorsBySpeciality = async (speciality) => {
-    const normalized = speciality.trim().toLowerCase()
-    const filteredDoctors = doctors.filter((doctor) => {
-      if (!normalized) {
-        return true
+  const ensurePatientId = useCallback(async () => {
+    if (!auth?.user) {
+      throw new Error('Please login to continue')
+    }
+
+    if (String(auth.user.role).toLowerCase() !== 'patient') {
+      throw new Error('Patient account required for this action')
+    }
+
+    if (auth.user.patient_id) {
+      return Number(auth.user.patient_id)
+    }
+
+    const me = await fetchCurrentUser()
+
+    if (!me?.patient_id) {
+      throw new Error('Patient profile not found for this user')
+    }
+
+    return Number(me.patient_id)
+  }, [auth, fetchCurrentUser])
+
+  const logout = useCallback(() => {
+    setAuth(null)
+    setMappingCache([])
+    setHasFetchedMappings(false)
+  }, [])
+
+  const addDoctor = useCallback(
+    (payload) => {
+      const formData = new FormData()
+      formData.append('name', payload.name)
+      formData.append('speciality', payload.speciality)
+
+      if (payload.imageFile) {
+        formData.append('image', payload.imageFile)
       }
 
-      return doctor.speciality.toLowerCase().includes(normalized)
-    })
+      return apiRequest({
+        path: '/doctors',
+        method: 'POST',
+        body: formData,
+        isFormData: true,
+      })
+    },
+    [apiRequest],
+  )
 
-    const response = []
+  const updateDoctor = useCallback(
+    (payload) => {
+      const formData = new FormData()
+      formData.append('name', payload.name)
+      formData.append('speciality', payload.speciality)
 
-    filteredDoctors.forEach((doctor) => {
-      const relatedMappings = mappings.filter(
-        (item) => item.doctor_id === doctor.id,
-      )
+      if (payload.imageFile) {
+        formData.append('image', payload.imageFile)
+      }
 
-      relatedMappings.forEach((mapping) => {
-        const clinic = clinics.find((entry) => entry.id === mapping.clinic_id)
-        const relatedAvailability = availability.filter(
-          (entry) =>
-            entry.doctor_id === doctor.id && entry.clinic_id === mapping.clinic_id,
+      return apiRequest({
+        path: `/doctors/${Number(payload.id)}`,
+        method: 'PUT',
+        body: formData,
+        isFormData: true,
+      })
+    },
+    [apiRequest],
+  )
+
+  const deleteDoctor = useCallback(
+    (doctorId) =>
+      apiRequest({
+        path: `/doctors/${Number(doctorId)}`,
+        method: 'DELETE',
+      }),
+    [apiRequest],
+  )
+
+  const getDoctors = useCallback(() => apiRequest({ path: '/doctors' }), [apiRequest])
+
+  const addClinic = useCallback(
+    (payload) => {
+      const formData = new FormData()
+      formData.append('name', payload.name)
+      formData.append('location', payload.location)
+
+      if (payload.imageFile) {
+        formData.append('image', payload.imageFile)
+      }
+
+      return apiRequest({
+        path: '/clinics',
+        method: 'POST',
+        body: formData,
+        isFormData: true,
+      })
+    },
+    [apiRequest],
+  )
+
+  const updateClinic = useCallback(
+    (payload) => {
+      const formData = new FormData()
+      formData.append('name', payload.name)
+      formData.append('location', payload.location)
+
+      if (payload.imageFile) {
+        formData.append('image', payload.imageFile)
+      }
+
+      return apiRequest({
+        path: `/clinics/${Number(payload.id)}`,
+        method: 'PUT',
+        body: formData,
+        isFormData: true,
+      })
+    },
+    [apiRequest],
+  )
+
+  const deleteClinic = useCallback(
+    (clinicId) =>
+      apiRequest({
+        path: `/clinics/${Number(clinicId)}`,
+        method: 'DELETE',
+      }),
+    [apiRequest],
+  )
+
+  const getClinics = useCallback(() => apiRequest({ path: '/clinics' }), [apiRequest])
+
+  const mapDoctorToClinic = useCallback(
+    async (payload) => {
+      const response = await apiRequest({
+        path: '/doctor-clinic',
+        method: 'POST',
+        body: {
+          doctor_id: Number(payload.doctor_id),
+          clinic_id: Number(payload.clinic_id),
+        },
+      })
+
+      setMappingCache((prev) => {
+        const exists = prev.some(
+          (item) =>
+            item.doctor_id === Number(payload.doctor_id) &&
+            item.clinic_id === Number(payload.clinic_id),
         )
 
-        if (!relatedAvailability.length) {
-          response.push({
-            doctor_id: doctor.id,
-            doctor_name: doctor.name,
-            speciality: doctor.speciality,
-            clinic: clinic?.name ?? 'Unknown Clinic',
-            day: 'Not set',
-            time: 'Not available',
-            image: doctor.image,
-          })
-          return
+        if (exists) {
+          return prev
         }
 
-        relatedAvailability.forEach((slot) => {
-          response.push({
-            doctor_id: doctor.id,
-            doctor_name: doctor.name,
-            speciality: doctor.speciality,
-            clinic: clinic?.name ?? 'Unknown Clinic',
-            day: slot.day,
-            time: `${slot.start_time}-${slot.end_time}`,
-            image: doctor.image,
-          })
-        })
+        return [
+          ...prev,
+          {
+            doctor_id: Number(payload.doctor_id),
+            clinic_id: Number(payload.clinic_id),
+          },
+        ]
       })
-    })
+      setHasFetchedMappings(true)
 
-    return withLatency(response)
-  }
+      return response
+    },
+    [apiRequest],
+  )
 
-  const computeSlotsForDate = ({ doctor_id, clinic_id, date }) => {
-    const dayName = getDayNameFromDate(date)
-    const doctorId = Number(doctor_id)
-    const clinicId = clinic_id ? Number(clinic_id) : null
+  const getAvailability = useCallback(
+    (doctorId) =>
+      apiRequest({
+        path: '/availability',
+        query: doctorId ? { doctor_id: Number(doctorId) } : undefined,
+      }),
+    [apiRequest],
+  )
 
-    if (!dayName || !WEEK_DAYS.includes(dayName)) {
+  const getMappings = useCallback(async () => {
+    if (hasFetchedMappings) {
+      return [...mappingCache]
+    }
+
+    const mappingRows = await apiRequest({ path: '/doctor-clinic' })
+    const normalizedRows = Array.isArray(mappingRows) ? mappingRows : []
+
+    setMappingCache(normalizedRows)
+    setHasFetchedMappings(true)
+    return normalizedRows
+  }, [hasFetchedMappings, mappingCache, apiRequest])
+
+  const addAvailability = useCallback(
+    (payload) =>
+      apiRequest({
+        path: '/availability',
+        method: 'POST',
+        body: {
+          doctor_id: Number(payload.doctor_id),
+          clinic_id: Number(payload.clinic_id),
+          day: payload.day,
+          start_time: payload.start_time,
+          end_time: payload.end_time,
+        },
+      }),
+    [apiRequest],
+  )
+
+  const createLeave = useCallback(
+    (payload) =>
+      apiRequest({
+        path: '/leaves',
+        method: 'POST',
+        body: {
+          doctor_id: Number(payload.doctor_id),
+          start_date: payload.start_date,
+          end_date: payload.end_date,
+          reason: payload.reason,
+          number_of_leaves: Number(payload.number_of_leaves),
+        },
+      }),
+    [apiRequest],
+  )
+
+  const getLeaves = useCallback(
+    (doctorId) =>
+      apiRequest({
+        path: '/leaves',
+        query: doctorId ? { doctor_id: Number(doctorId) } : undefined,
+      }),
+    [apiRequest],
+  )
+
+  const searchDoctors = useCallback(
+    (filters = {}) => {
+      const query = {
+        name: filters.name?.trim() || undefined,
+        speciality: filters.speciality?.trim() || undefined,
+        doctor_id: filters.doctor_id ? Number(filters.doctor_id) : undefined,
+        clinic_id: filters.clinic_id ? Number(filters.clinic_id) : undefined,
+      }
+
+      return apiRequest({
+        path: '/search',
+        query,
+      })
+    },
+    [apiRequest],
+  )
+
+  const getAvailabilityByDate = useCallback(
+    (payload) =>
+      apiRequest({
+        path: '/availability-by-date',
+        query: {
+          doctor_id: Number(payload.doctor_id),
+          clinic_id: Number(payload.clinic_id),
+          date: payload.date,
+        },
+      }),
+    [apiRequest],
+  )
+
+  const createAppointment = useCallback(
+    async (payload) => {
+      const patientId = await ensurePatientId()
+
+      return apiRequest({
+        path: '/appointments',
+        method: 'POST',
+        body: {
+          patient_id: patientId,
+          doctor_id: Number(payload.doctor_id),
+          clinic_id: Number(payload.clinic_id),
+          date: payload.date,
+          time: payload.time,
+        },
+      })
+    },
+    [apiRequest, ensurePatientId],
+  )
+
+  const getAppointments = useCallback(async () => {
+    if (!auth?.user) {
       return []
     }
 
-    const matchingWindows = availability.filter((entry) => {
-      if (entry.doctor_id !== doctorId || entry.day !== dayName) {
-        return false
-      }
+    const role = String(auth.user.role).toLowerCase()
 
-      if (!clinicId) {
-        return true
-      }
+    if (role === 'admin') {
+      return apiRequest({
+        path: '/appointments',
+      })
+    }
 
-      return entry.clinic_id === clinicId
+    if (role !== 'patient') {
+      return []
+    }
+
+    const patientId = await ensurePatientId()
+
+    return apiRequest({
+      path: '/appointments',
+      query: { patient_id: patientId },
     })
+  }, [auth?.user, ensurePatientId, apiRequest])
 
-    const generatedSlots = matchingWindows.flatMap((window) =>
-      buildSlots(window.start_time, window.end_time),
-    )
-
-    const bookedSlots = new Set(
-      appointments
-        .filter(
-          (entry) =>
-            entry.doctor_id === doctorId &&
-            entry.date === date &&
-            entry.status === 'BOOKED',
-        )
-        .map((entry) => entry.time),
-    )
-
-    return [...new Set(generatedSlots)]
-      .filter((slot) => !bookedSlots.has(slot))
-      .sort()
-  }
-
-  const getAvailabilityByDate = async (payload) => {
-    const doctorId = Number(payload.doctor_id)
-    const availableSlots = computeSlotsForDate(payload)
-
-    return withLatency({
-      doctor_id: doctorId,
-      available_slots: availableSlots,
-    })
-  }
-
-  const createAppointment = async (payload) => {
-    const availableSlots = computeSlotsForDate(payload)
-
-    if (!availableSlots.includes(payload.time)) {
-      return withError('Selected time slot is not available')
-    }
-
-    const appointmentId = nextId(appointments, 'appointment_id')
-    const newAppointment = {
-      appointment_id: appointmentId,
-      doctor_id: Number(payload.doctor_id),
-      clinic_id: Number(payload.clinic_id),
-      date: payload.date,
-      time: payload.time,
-      status: 'BOOKED',
-      user_id: auth?.user?.id ?? null,
-    }
-
-    setAppointments((prev) => [...prev, newAppointment])
-
-    return withLatency({
-      appointment_id: appointmentId,
-      status: 'BOOKED',
-    })
-  }
-
-  const getAppointments = async () => {
-    const role = auth?.user?.role
-
-    if (!role) {
-      return withLatency([])
-    }
-
-    const scopedAppointments =
-      role === 'admin'
-        ? appointments
-        : appointments.filter((item) => item.user_id === auth.user.id)
-
-    return withLatency(scopedAppointments.map(toApiAppointmentShape))
-  }
-
-  const updateAppointment = async (payload) => {
-    const appointmentId = Number(payload.appointment_id)
-
-    if (!APPOINTMENT_STATUSES.includes(payload.status)) {
-      return withError('Invalid status')
-    }
-
-    setAppointments((prev) =>
-      prev.map((item) => {
-        if (item.appointment_id !== appointmentId) {
-          return item
-        }
-
-        return {
-          ...item,
+  const updateAppointment = useCallback(
+    (payload) =>
+      apiRequest({
+        path: `/appointments/${Number(payload.appointment_id)}`,
+        method: 'PUT',
+        body: {
           status: payload.status,
-        }
+        },
       }),
-    )
+    [apiRequest],
+  )
 
-    return withLatency({
-      message: 'Appointment updated',
-    })
-  }
-
-  const getUtilization = async (clinicId) => {
-    const numericClinicId = Number(clinicId)
-
-    const windows = availability.filter((item) => item.clinic_id === numericClinicId)
-    const totalSlots = windows.reduce(
-      (sum, item) => sum + buildSlots(item.start_time, item.end_time).length,
-      0,
-    )
-
-    const bookedSlots = appointments.filter(
-      (item) => item.clinic_id === numericClinicId && item.status === 'BOOKED',
-    ).length
-
-    const utilizationPercentage =
-      totalSlots === 0 ? 0 : Math.min(100, Math.round((bookedSlots / totalSlots) * 100))
-
-    return withLatency({
-      clinic_id: numericClinicId,
-      total_slots: totalSlots,
-      booked_slots: bookedSlots,
-      utilization_percentage: utilizationPercentage,
-    })
-  }
+  const getUtilization = useCallback(
+    (clinicId) =>
+      apiRequest({
+        path: '/utilization',
+        query: { clinic_id: Number(clinicId) },
+      }),
+    [apiRequest],
+  )
 
   const value = useMemo(
     () => ({
@@ -546,15 +526,22 @@ export function MockApiProvider({ children }) {
       signup,
       login,
       logout,
+      fetchCurrentUser,
       addDoctor,
+      updateDoctor,
+      deleteDoctor,
       getDoctors,
       addClinic,
+      updateClinic,
+      deleteClinic,
       getClinics,
       mapDoctorToClinic,
       getMappings,
       addAvailability,
+      createLeave,
+      getLeaves,
       getAvailability,
-      searchDoctorsBySpeciality,
+      searchDoctors,
       getAvailabilityByDate,
       createAppointment,
       getAppointments,
@@ -564,12 +551,30 @@ export function MockApiProvider({ children }) {
     [
       auth,
       currentRole,
-      users,
-      doctors,
-      clinics,
-      mappings,
-      availability,
-      appointments,
+      signup,
+      login,
+      logout,
+      fetchCurrentUser,
+      addDoctor,
+      updateDoctor,
+      deleteDoctor,
+      getDoctors,
+      addClinic,
+      updateClinic,
+      deleteClinic,
+      getClinics,
+      mapDoctorToClinic,
+      getMappings,
+      addAvailability,
+      createLeave,
+      getLeaves,
+      getAvailability,
+      searchDoctors,
+      getAvailabilityByDate,
+      createAppointment,
+      getAppointments,
+      updateAppointment,
+      getUtilization,
     ],
   )
 

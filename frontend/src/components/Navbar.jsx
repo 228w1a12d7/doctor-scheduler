@@ -7,6 +7,7 @@ const linksByRole = {
     { to: '/app/clinics', label: 'Clinics' },
     { to: '/app/mapping', label: 'Mapping' },
     { to: '/app/availability', label: 'Availability' },
+    { to: '/app/leaves', label: 'Leaves' },
     { to: '/app/appointments', label: 'Appointments' },
     { to: '/app/utilization', label: 'Utilization' },
   ],
@@ -32,8 +33,13 @@ function Navbar() {
   const links = linksByRole[role] ?? []
 
   const handleLogout = () => {
+    const shouldLogout = window.confirm('Are you sure you want to logout?')
+    if (!shouldLogout) {
+      return
+    }
+
     logout()
-    navigate('/login', { replace: true })
+    navigate('/signin', { replace: true })
   }
 
   return (

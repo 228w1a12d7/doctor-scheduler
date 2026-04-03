@@ -11,14 +11,18 @@ const emptyForm = {
 }
 
 function DoctorsPage() {
-  const { addDoctor, getDoctors } = useMockApi()
+  const { addDoctor, updateDoctor, deleteDoctor, getDoctors } = useMockApi()
   const [form, setForm] = useState(emptyForm)
   const [doctors, setDoctors] = useState([])
+  const [editingDoctorId, setEditingDoctorId] = useState(null)
+  const [editForm, setEditForm] = useState(emptyForm)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isMutatingRowId, setIsMutatingRowId] = useState(null)
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
   const [fileInputKey, setFileInputKey] = useState(0)
+  const [editFileInputKey, setEditFileInputKey] = useState(0)
 
   useEffect(() => {
     let mounted = true
@@ -52,8 +56,12 @@ function DoctorsPage() {
       if (form.imagePreview.startsWith('blob:')) {
         URL.revokeObjectURL(form.imagePreview)
       }
+
+      if (editForm.imagePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(editForm.imagePreview)
+      }
     },
-    [form.imagePreview],
+    [form.imagePreview, editForm.imagePreview],
   )
 
   const handleFieldChange = (event) => {
@@ -89,7 +97,7 @@ function DoctorsPage() {
       const response = await addDoctor({
         name: form.name.trim(),
         speciality: form.speciality.trim(),
-        image: form.imagePreview,
+        imageFile: form.imageFile,
       })
 
       const updatedDoctors = await getDoctors()
@@ -101,6 +109,96 @@ function DoctorsPage() {
       setError(submitError.message)
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleEditFieldChange = (event) => {
+    const { name, value } = event.target
+    setEditForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }))
+  }
+
+  const handleEditImageChange = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    const previewUrl = URL.createObjectURL(file)
+
+    setEditForm((prev) => ({
+      ...prev,
+      imageFile: file,
+      imagePreview: previewUrl,
+    }))
+  }
+
+  const startEditing = (doctor) => {
+    setError('')
+    setFeedback('')
+    setEditingDoctorId(doctor.id)
+    setEditForm({
+      name: doctor.name,
+      speciality: doctor.speciality,
+      imageFile: null,
+      imagePreview: doctor.image || '',
+    })
+    setEditFileInputKey((prev) => prev + 1)
+  }
+
+  const cancelEditing = () => {
+    setEditingDoctorId(null)
+    setEditForm(emptyForm)
+  }
+
+  const handleUpdateDoctor = async (doctorId) => {
+    setError('')
+    setFeedback('')
+    setIsMutatingRowId(doctorId)
+
+    try {
+      const response = await updateDoctor({
+        id: doctorId,
+        name: editForm.name.trim(),
+        speciality: editForm.speciality.trim(),
+        imageFile: editForm.imageFile,
+      })
+
+      const updatedDoctors = await getDoctors()
+      setDoctors(updatedDoctors)
+      setFeedback(response.message)
+      cancelEditing()
+    } catch (updateError) {
+      setError(updateError.message)
+    } finally {
+      setIsMutatingRowId(null)
+    }
+  }
+
+  const handleDeleteDoctor = async (doctorId) => {
+    const confirmed = window.confirm('Delete this doctor? This will remove linked mapping, availability and appointments.')
+    if (!confirmed) {
+      return
+    }
+
+    setError('')
+    setFeedback('')
+    setIsMutatingRowId(doctorId)
+
+    try {
+      const response = await deleteDoctor(doctorId)
+      const updatedDoctors = await getDoctors()
+      setDoctors(updatedDoctors)
+      setFeedback(response.message)
+      if (editingDoctorId === doctorId) {
+        cancelEditing()
+      }
+    } catch (deleteError) {
+      setError(deleteError.message)
+    } finally {
+      setIsMutatingRowId(null)
     }
   }
 
@@ -199,15 +297,87 @@ function DoctorsPage() {
                   className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
                 >
                   <img
-                    src={doctor.image || PLACEHOLDER_IMAGE}
+                    src={
+                      editingDoctorId === doctor.id
+                        ? editForm.imagePreview || PLACEHOLDER_IMAGE
+                        : doctor.image || PLACEHOLDER_IMAGE
+                    }
                     alt={doctor.name}
+                    onError={(event) => {
+                      if (event.currentTarget.src !== PLACEHOLDER_IMAGE) {
+                        event.currentTarget.src = PLACEHOLDER_IMAGE
+                      }
+                    }}
                     className="h-36 w-full rounded-xl object-cover"
                   />
-                  <h4 className="mt-3 text-lg font-semibold">{doctor.name}</h4>
-                  <p className="text-sm text-slate-600">{doctor.speciality}</p>
-                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-teal-700">
-                    id: {doctor.id}
-                  </p>
+
+                  {editingDoctorId === doctor.id ? (
+                    <div className="mt-3 space-y-3">
+                      <input
+                        name="name"
+                        value={editForm.name}
+                        onChange={handleEditFieldChange}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
+                      />
+                      <input
+                        name="speciality"
+                        value={editForm.speciality}
+                        onChange={handleEditFieldChange}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
+                      />
+                      <input
+                        key={editFileInputKey}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleEditImageChange}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none file:mr-3 file:rounded-lg file:border-0 file:bg-teal-700 file:px-3 file:py-1.5 file:text-white"
+                      />
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateDoctor(doctor.id)}
+                          disabled={isMutatingRowId === doctor.id}
+                          className="flex-1 rounded-xl bg-teal-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {isMutatingRowId === doctor.id ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEditing}
+                          className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <h4 className="mt-3 text-lg font-semibold">{doctor.name}</h4>
+                      <p className="text-sm text-slate-600">{doctor.speciality}</p>
+                      <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-teal-700">
+                        id: {doctor.id}
+                      </p>
+
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startEditing(doctor)}
+                          className="flex-1 rounded-xl border border-teal-300 px-3 py-2 text-sm font-semibold text-teal-700 transition hover:bg-teal-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteDoctor(doctor.id)}
+                          disabled={isMutatingRowId === doctor.id}
+                          className="flex-1 rounded-xl border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </article>
               ))}
             </div>

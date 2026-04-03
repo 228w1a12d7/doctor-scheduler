@@ -9,6 +9,7 @@ import BookingPage from './pages/BookingPage.jsx'
 import ClinicsPage from './pages/ClinicsPage.jsx'
 import DoctorsPage from './pages/DoctorsPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
+import LeavesPage from './pages/LeavesPage.jsx'
 import MappingPage from './pages/MappingPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
 import SearchPage from './pages/SearchPage.jsx'
@@ -24,8 +25,9 @@ function RoleHomeRedirect() {
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/" element={<Navigate to="/signin" replace />} />
+      <Route path="/signin" element={<LoginPage />} />
+      <Route path="/login" element={<Navigate to="/signin" replace />} />
       <Route path="/signup" element={<SignupPage />} />
 
       <Route
@@ -38,7 +40,14 @@ function App() {
       >
         <Route index element={<RoleHomeRedirect />} />
 
-        <Route path="search" element={<SearchPage />} />
+        <Route
+          path="search"
+          element={
+            <RoleGate allowedRoles={['patient']}>
+              <SearchPage />
+            </RoleGate>
+          }
+        />
         <Route path="book" element={<BookingPage />} />
         <Route path="appointments" element={<AppointmentsPage />} />
 
@@ -71,6 +80,14 @@ function App() {
           element={
             <RoleGate allowedRoles={['admin']}>
               <AvailabilityPage />
+            </RoleGate>
+          }
+        />
+        <Route
+          path="leaves"
+          element={
+            <RoleGate allowedRoles={['admin']}>
+              <LeavesPage />
             </RoleGate>
           }
         />

@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import PageHeader from '../components/PageHeader.jsx'
 import { useMockApi } from '../context/MockApiContext.jsx'
 
+const getTodayDateInputValue = () => {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
+
 function BookingPage() {
+  const [searchParams] = useSearchParams()
   const {
     createAppointment,
     getAvailabilityByDate,
@@ -26,6 +34,7 @@ function BookingPage() {
   const [isBooking, setIsBooking] = useState(false)
   const [error, setError] = useState('')
   const [feedback, setFeedback] = useState('')
+  const todayDate = getTodayDateInputValue()
 
   useEffect(() => {
     let mounted = true
@@ -63,6 +72,48 @@ function BookingPage() {
     }
   }, [getDoctors, getClinics, getMappings])
 
+  useEffect(() => {
+    if (isLoading || doctors.length === 0) {
+      return
+    }
+
+    const doctorIdFromQuery = searchParams.get('doctorId')
+    if (!doctorIdFromQuery) {
+      return
+    }
+
+    const doctorExists = doctors.some((doctor) => String(doctor.id) === doctorIdFromQuery)
+    if (!doctorExists) {
+      return
+    }
+
+    const clinicNameFromQuery = searchParams.get('clinic')
+    const mappedClinicIds = mappings
+      .filter((item) => String(item.doctor_id) === doctorIdFromQuery)
+      .map((item) => item.clinic_id)
+    const matchedClinic = clinicNameFromQuery
+      ? clinics.find(
+          (clinic) =>
+            mappedClinicIds.includes(clinic.id) &&
+            clinic.name.toLowerCase() === clinicNameFromQuery.toLowerCase(),
+        )
+      : null
+
+    setForm((prev) => {
+      const nextClinicId = matchedClinic ? String(matchedClinic.id) : prev.clinic_id
+
+      if (prev.doctor_id === doctorIdFromQuery && prev.clinic_id === nextClinicId) {
+        return prev
+      }
+
+      return {
+        ...prev,
+        doctor_id: doctorIdFromQuery,
+        clinic_id: nextClinicId,
+      }
+    })
+  }, [isLoading, doctors, clinics, mappings, searchParams])
+
   const availableClinics = useMemo(() => {
     if (!form.doctor_id) {
       return clinics
@@ -94,36 +145,75 @@ function BookingPage() {
 
   const handleFieldChange = (event) => {
     const { name, value } = event.target
+    setSelectedSlot('')
+    setFeedback('')
+    setError('')
     setForm((prev) => ({
       ...prev,
       [name]: value,
     }))
   }
 
-  const handleFindSlots = async (event) => {
-    event.preventDefault()
-    setError('')
-    setFeedback('')
-    setSelectedSlot('')
-    setIsFetchingSlots(true)
-
-    try {
-      const response = await getAvailabilityByDate({
-        doctor_id: Number(form.doctor_id),
-        clinic_id: Number(form.clinic_id),
-        date: form.date,
-      })
-      setSlotsResponse(response)
-    } catch (fetchError) {
-      setError(fetchError.message)
-    } finally {
+  useEffect(() => {
+    if (!form.doctor_id || !form.clinic_id || !form.date) {
+      setSlotsResponse(null)
       setIsFetchingSlots(false)
+      return
     }
-  }
+
+    if (form.date < todayDate) {
+      setSlotsResponse({ doctor_id: Number(form.doctor_id), available_slots: [] })
+      setError('Please choose today or a future date')
+      setIsFetchingSlots(false)
+      return
+    }
+
+    let active = true
+
+    const fetchSlots = async () => {
+      setIsFetchingSlots(true)
+      setError('')
+
+      try {
+        const response = await getAvailabilityByDate({
+          doctor_id: Number(form.doctor_id),
+          clinic_id: Number(form.clinic_id),
+          date: form.date,
+        })
+
+        if (!active) {
+          return
+        }
+
+        setSlotsResponse(response)
+      } catch (fetchError) {
+        if (active) {
+          setError(fetchError.message)
+          setSlotsResponse(null)
+        }
+      } finally {
+        if (active) {
+          setIsFetchingSlots(false)
+        }
+      }
+    }
+
+    void fetchSlots()
+
+    return () => {
+      active = false
+    }
+  }, [form.doctor_id, form.clinic_id, form.date, todayDate, getAvailabilityByDate])
 
   const handleBook = async () => {
     if (!selectedSlot) {
       setError('Please select an available slot before booking')
+      return
+    }
+
+    if (!slotsResponse?.available_slots?.includes(selectedSlot)) {
+      setError('Selected slot is no longer available. Please select again.')
+      setSelectedSlot('')
       return
     }
 
@@ -159,14 +249,11 @@ function BookingPage() {
     <section>
       <PageHeader
         title="Appointment Booking"
-        subtitle="Select date, fetch available slots, and create appointments without real API integration."
+        subtitle="Pick doctor, clinic, and date. Slots load automatically for that day, and only valid future bookings are allowed."
       />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.45fr]">
-        <form
-          onSubmit={handleFindSlots}
-          className="rounded-3xl border border-teal-100 bg-white/85 p-6 shadow-lg shadow-teal-100/40"
-        >
+        <section className="rounded-3xl border border-teal-100 bg-white/85 p-6 shadow-lg shadow-teal-100/40">
           <h3 className="text-xl font-semibold">Find Slots</h3>
 
           {isLoading ? (
@@ -215,26 +302,25 @@ function BookingPage() {
                   required
                   type="date"
                   name="date"
+                  min={todayDate}
                   value={form.date}
                   onChange={handleFieldChange}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
                 />
               </label>
 
-              <button
-                type="submit"
-                disabled={isFetchingSlots}
-                className="w-full rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {isFetchingSlots ? 'Checking...' : 'Show Available Slots'}
-              </button>
+              <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                Slots are loaded automatically when doctor, clinic, and date are selected.
+              </p>
             </div>
           )}
-        </form>
+        </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white/85 p-6 shadow-lg shadow-slate-100/70">
           <h3 className="text-xl font-semibold">Available Slots</h3>
-          <p className="mt-1 text-sm text-slate-600">Response shape: {'{ doctor_id, available_slots: [] }'}</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Slots refresh instantly when date or location changes.
+          </p>
 
           {error && (
             <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
@@ -248,12 +334,22 @@ function BookingPage() {
             </p>
           )}
 
+          {isFetchingSlots && (
+            <p className="mt-5 text-sm text-slate-500">Checking live slot availability...</p>
+          )}
+
           {!slotsResponse ? (
             <p className="mt-5 text-sm text-slate-500">Choose doctor, clinic and date to load slots.</p>
           ) : slotsResponse.available_slots.length === 0 ? (
-            <p className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              No slots available for selected date.
-            </p>
+            slotsResponse.is_on_leave ? (
+              <p className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                Doctor is on leave{slotsResponse.leave_reason ? ` (${slotsResponse.leave_reason})` : ''}.
+              </p>
+            ) : (
+              <p className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                No slots available for selected date.
+              </p>
+            )
           ) : (
             <>
               <div className="mt-5 flex flex-wrap gap-2">
@@ -264,8 +360,9 @@ function BookingPage() {
                       key={slot}
                       type="button"
                       onClick={() => setSelectedSlot(slot)}
+                      disabled={isBooking}
                       className={[
-                        'rounded-full border px-3 py-1.5 text-sm font-semibold transition',
+                        'rounded-full border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
                         isActive
                           ? 'border-teal-700 bg-teal-700 text-white'
                           : 'border-slate-300 bg-white text-slate-700 hover:border-teal-600 hover:text-teal-700',
