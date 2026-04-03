@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader.jsx'
 import { WEEK_DAYS } from '../constants/appConstants.js'
 import { useMockApi } from '../context/MockApiContext.jsx'
@@ -26,23 +26,26 @@ function AvailabilityPage() {
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
 
-  const loadAvailabilityRows = async (doctorList) => {
-    const nestedRows = await Promise.all(
-      doctorList.map(async (doctor) => {
-        const rows = await getAvailability(doctor.id)
+  const loadAvailabilityRows = useCallback(
+    async (doctorList) => {
+      const nestedRows = await Promise.all(
+        doctorList.map(async (doctor) => {
+          const rows = await getAvailability(doctor.id)
 
-        return rows.map((row, index) => ({
-          ...row,
-          doctor_id: doctor.id,
-          doctor_name: doctor.name,
-          speciality: doctor.speciality,
-          key: `${doctor.id}-${row.clinic}-${row.day}-${row.start_time}-${row.end_time}-${index}`,
-        }))
-      }),
-    )
+          return rows.map((row, index) => ({
+            ...row,
+            doctor_id: doctor.id,
+            doctor_name: doctor.name,
+            speciality: doctor.speciality,
+            key: `${doctor.id}-${row.clinic}-${row.day}-${row.start_time}-${row.end_time}-${index}`,
+          }))
+        }),
+      )
 
-    return nestedRows.flat()
-  }
+      return nestedRows.flat()
+    },
+    [getAvailability],
+  )
 
   useEffect(() => {
     let mounted = true
@@ -78,7 +81,7 @@ function AvailabilityPage() {
     return () => {
       mounted = false
     }
-  }, [getDoctors, getClinics, getAvailability])
+  }, [getDoctors, getClinics, loadAvailabilityRows])
 
   const filteredAvailabilityRows = useMemo(
     () =>
