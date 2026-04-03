@@ -61,9 +61,10 @@ def create_appointment(
         .first()
     )
     if leave_conflict:
+        leave_reason = leave_conflict.reason.strip() if leave_conflict.reason else "Leave"
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Doctor is on leave for the selected date",
+            detail=f"Doctor is on leave ({leave_reason})",
         )
 
     day = get_weekday_name(payload.date)
@@ -102,7 +103,6 @@ def create_appointment(
         db.query(Appointment)
         .filter(
             Appointment.doctor_id == payload.doctor_id,
-            Appointment.clinic_id == payload.clinic_id,
             Appointment.date == payload.date,
             Appointment.time == payload.time,
             Appointment.status == "BOOKED",
@@ -132,20 +132,32 @@ def create_appointment(
 
 @router.get("/appointments", response_model=list[AppointmentOut])
 def list_appointments(
-    patient_id: int = Query(...),
+    patient_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
-    appointments = (
-        db.query(Appointment)
-        .filter(Appointment.patient_id == patient_id)
-        .order_by(Appointment.date.asc(), Appointment.time.asc())
-        .all()
-    )
+    is_admin = str(user.role).lower() == "admin"
+
+    query = db.query(Appointment)
+
+    if is_admin:
+        if patient_id is not None:
+            query = query.filter(Appointment.patient_id == patient_id)
+    else:
+        if patient_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="patient_id is required",
+            )
+
+        query = query.filter(Appointment.patient_id == patient_id)
+
+    appointments = query.order_by(Appointment.date.desc(), Appointment.time.desc()).all()
 
     return [
         {
             "appointment_id": row.id,
+            "patient_id": row.patient_id,
             "doctor_id": row.doctor_id,
             "clinic_id": row.clinic_id,
             "date": row.date,
@@ -161,8 +173,14 @@ def update_appointment_status(
     appointment_id: int,
     payload: AppointmentUpdateRequest,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
+    if str(user.role).lower() != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin can update appointment status",
+        )
+
     appointment = db.get(Appointment, appointment_id)
     if appointment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")

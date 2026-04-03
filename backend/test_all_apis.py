@@ -15,6 +15,7 @@ TIMEOUT = 10
 class APITester:
     def __init__(self):
         self.token = None
+        self.admin_token = None
         self.patient_id = None
         self.doctor_id = None
         self.clinic_id = None
@@ -28,14 +29,16 @@ class APITester:
         print(message)
         self.results.append(message)
 
-    def test_endpoint(self, test_num, name, method, endpoint, data=None, json_data=None, require_token=True):
+    def test_endpoint(self, test_num, name, method, endpoint, data=None, json_data=None, require_token=True, token_override=None):
         """Test a single endpoint"""
         try:
             url = f"{BASE_URL}{endpoint}"
             headers = {}
             
-            if require_token and self.token:
-                headers["Authorization"] = f"Bearer {self.token}"
+            if require_token:
+                active_token = token_override or self.token
+                if active_token:
+                    headers["Authorization"] = f"Bearer {active_token}"
 
             if method == "GET":
                 response = requests.get(url, headers=headers, timeout=TIMEOUT)
@@ -113,8 +116,32 @@ class APITester:
         )
         if resp and "token" in resp:
             self.token = resp["token"]
-            self.patient_id = resp["user"]["id"]
+            self.patient_id = resp["user"].get("patient_id") or resp["user"]["id"]
             self.log(f"  Token acquired: {self.token[:30]}...\n")
+
+        # Admin setup (needed for admin-only status updates)
+        admin_email = f"admin{datetime.now().timestamp()}@gmail.com"
+        self.test_endpoint(
+            "2A", "POST /auth/signup (admin)", "POST", "/auth/signup",
+            json_data={
+                "name": "Admin User",
+                "email": admin_email,
+                "password": "123456",
+                "role": "admin"
+            },
+            require_token=False
+        )
+
+        admin_login_resp = self.test_endpoint(
+            "2B", "POST /auth/login (admin)", "POST", "/auth/login",
+            json_data={
+                "email": admin_email,
+                "password": "123456"
+            },
+            require_token=False
+        )
+        if admin_login_resp and "token" in admin_login_resp:
+            self.admin_token = admin_login_resp["token"]
 
         # TEST 3: Create Doctor (form-data, no image)
         resp = self.test_endpoint(
@@ -224,7 +251,8 @@ class APITester:
             self.test_endpoint(
                 14, "PUT /appointments/{id}", "PUT", f"/appointments/{self.appointment_id}",
                 json_data={"status": "COMPLETED"},
-                require_token=True
+                require_token=True,
+                token_override=self.admin_token
             )
 
         # TEST 15: Create Leave

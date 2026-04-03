@@ -40,3 +40,52 @@ def create_doctor(
 def list_doctors(db: Session = Depends(get_db), _user=Depends(get_current_user)):
     doctors = db.query(Doctor).order_by(Doctor.id.asc()).all()
     return doctors
+
+
+@router.put("/doctors/{doctor_id}")
+def update_doctor(
+    doctor_id: int,
+    name: str = Form(...),
+    speciality: str = Form(...),
+    image: UploadFile | None = File(default=None),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    doctor = db.get(Doctor, doctor_id)
+    if doctor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
+
+    clean_name = name.strip()
+    clean_speciality = speciality.strip()
+
+    if not clean_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name is required")
+    if not clean_speciality:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Speciality is required")
+
+    doctor.name = clean_name
+    doctor.speciality = clean_speciality
+
+    if image is not None:
+        doctor.image = upload_image_to_cloudinary(image=image, folder="doctors")
+
+    db.commit()
+    db.refresh(doctor)
+
+    return {"id": doctor.id, "message": "Doctor updated"}
+
+
+@router.delete("/doctors/{doctor_id}")
+def delete_doctor(
+    doctor_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    doctor = db.get(Doctor, doctor_id)
+    if doctor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
+
+    db.delete(doctor)
+    db.commit()
+
+    return {"message": "Doctor deleted"}
