@@ -6,7 +6,13 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
 from models import Appointment, Availability, Clinic, Doctor, DoctorClinic, Leave
-from schemas import AvailabilityByDateOut, AvailabilityCreateRequest, AvailabilityOut, LeaveCreateRequest
+from schemas import (
+    AvailabilityByDateOut,
+    AvailabilityCreateRequest,
+    AvailabilityOut,
+    LeaveCreateRequest,
+    LeaveOut,
+)
 from utils import (
     generate_15_min_slots,
     get_weekday_name,
@@ -24,6 +30,13 @@ VALID_DAYS = {
     "Friday",
     "Saturday",
     "Sunday",
+}
+LEAVE_REASON_TAXONOMY = {
+    "sick leave": "Sick Leave",
+    "sick": "Sick Leave",
+    "conference": "Conference",
+    "out of station": "Out of Station",
+    "out-of-station": "Out of Station",
 }
 
 
@@ -143,21 +156,85 @@ def create_leave(
             detail="start_date cannot be after end_date",
         )
 
+    normalized_reason_key = payload.reason.strip().lower()
+    normalized_reason = LEAVE_REASON_TAXONOMY.get(normalized_reason_key)
+    if normalized_reason is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reason must be one of: Sick Leave, Conference, Out of Station",
+        )
+
+    number_of_leaves = (payload.end_date - payload.start_date).days + 1
+    if payload.number_of_leaves is not None and payload.number_of_leaves != number_of_leaves:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="number_of_leaves must match start_date and end_date range",
+        )
+
+    has_appointment_conflict = (
+        db.query(Appointment)
+        .filter(
+            Appointment.doctor_id == payload.doctor_id,
+            Appointment.date >= payload.start_date,
+            Appointment.date <= payload.end_date,
+            Appointment.status == "BOOKED",
+        )
+        .first()
+    )
+    if has_appointment_conflict:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Booked appointments conflict with requested leave dates",
+        )
+
     leave = Leave(
         doctor_id=payload.doctor_id,
         start_date=payload.start_date,
         end_date=payload.end_date,
-        reason=payload.reason.strip(),
+        reason=normalized_reason,
     )
     db.add(leave)
     db.commit()
+    db.refresh(leave)
 
-    return {"message": "Leave recorded"}
+    return {
+        "message": "Leave recorded",
+        "leave_id": leave.id,
+        "number_of_leaves": number_of_leaves,
+    }
+
+
+@router.get("/leaves", response_model=list[LeaveOut])
+def list_leaves(
+    doctor_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    query = db.query(Leave, Doctor).join(Doctor, Doctor.id == Leave.doctor_id)
+
+    if doctor_id is not None:
+        query = query.filter(Leave.doctor_id == doctor_id)
+
+    rows = query.order_by(Leave.start_date.desc(), Leave.id.desc()).all()
+
+    return [
+        {
+            "id": leave.id,
+            "doctor_id": leave.doctor_id,
+            "doctor_name": doctor.name,
+            "start_date": leave.start_date,
+            "end_date": leave.end_date,
+            "reason": leave.reason,
+            "number_of_leaves": (leave.end_date - leave.start_date).days + 1,
+        }
+        for leave, doctor in rows
+    ]
 
 
 @router.get("/availability-by-date", response_model=AvailabilityByDateOut)
 def get_availability_by_date(
     doctor_id: int = Query(...),
+    clinic_id: int | None = Query(default=None),
     target_date: date = Query(..., alias="date"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user),
@@ -165,6 +242,19 @@ def get_availability_by_date(
     doctor = db.get(Doctor, doctor_id)
     if doctor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
+
+    if target_date < datetime.now().date():
+        return {
+            "doctor_id": doctor_id,
+            "available_slots": [],
+            "is_on_leave": False,
+            "leave_reason": None,
+        }
+
+    if clinic_id is not None:
+        clinic = db.get(Clinic, clinic_id)
+        if clinic is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clinic not found")
 
     leave_exists = (
         db.query(Leave)
@@ -176,14 +266,23 @@ def get_availability_by_date(
         .first()
     )
     if leave_exists:
-        return {"doctor_id": doctor_id, "available_slots": []}
+        return {
+            "doctor_id": doctor_id,
+            "available_slots": [],
+            "is_on_leave": True,
+            "leave_reason": leave_exists.reason,
+        }
 
     weekday = get_weekday_name(target_date)
-    availability_rows = (
-        db.query(Availability)
-        .filter(Availability.doctor_id == doctor_id, Availability.day == weekday)
-        .all()
+    availability_query = db.query(Availability).filter(
+        Availability.doctor_id == doctor_id,
+        Availability.day == weekday,
     )
+
+    if clinic_id is not None:
+        availability_query = availability_query.filter(Availability.clinic_id == clinic_id)
+
+    availability_rows = availability_query.all()
 
     slot_set: set[str] = set()
     for row in availability_rows:
@@ -211,4 +310,9 @@ def get_availability_by_date(
             if time_to_minutes(parse_time_or_400(slot)) > now_minutes
         ]
 
-    return {"doctor_id": doctor_id, "available_slots": available_slots}
+    return {
+        "doctor_id": doctor_id,
+        "available_slots": available_slots,
+        "is_on_leave": False,
+        "leave_reason": None,
+    }

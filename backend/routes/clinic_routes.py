@@ -71,3 +71,67 @@ def map_doctor_to_clinic(
         db.commit()
 
     return {"message": "Doctor mapped to clinic"}
+
+
+@router.get("/doctor-clinic", response_model=list[DoctorClinicMapRequest])
+def list_doctor_clinic_mappings(
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    rows = db.query(DoctorClinic).order_by(DoctorClinic.doctor_id.asc(), DoctorClinic.clinic_id.asc()).all()
+    return [
+        {
+            "doctor_id": row.doctor_id,
+            "clinic_id": row.clinic_id,
+        }
+        for row in rows
+    ]
+
+
+@router.put("/clinics/{clinic_id}")
+def update_clinic(
+    clinic_id: int,
+    name: str = Form(...),
+    location: str = Form(...),
+    image: UploadFile | None = File(default=None),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    clinic = db.get(Clinic, clinic_id)
+    if clinic is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clinic not found")
+
+    clean_name = name.strip()
+    clean_location = location.strip()
+
+    if not clean_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name is required")
+    if not clean_location:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Location is required")
+
+    clinic.name = clean_name
+    clinic.location = clean_location
+
+    if image is not None:
+        clinic.image = upload_image_to_cloudinary(image=image, folder="clinics")
+
+    db.commit()
+    db.refresh(clinic)
+
+    return {"id": clinic.id, "message": "Clinic updated"}
+
+
+@router.delete("/clinics/{clinic_id}")
+def delete_clinic(
+    clinic_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    clinic = db.get(Clinic, clinic_id)
+    if clinic is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clinic not found")
+
+    db.delete(clinic)
+    db.commit()
+
+    return {"message": "Clinic deleted"}

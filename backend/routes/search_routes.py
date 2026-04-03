@@ -12,18 +12,34 @@ router = APIRouter(tags=["search"])
 
 @router.get("/search", response_model=list[SearchOut])
 def search_by_speciality(
-    speciality: str = Query(...),
+    name: str | None = Query(default=None),
+    speciality: str | None = Query(default=None),
+    doctor_id: int | None = Query(default=None),
+    clinic_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user),
 ):
-    rows = (
+    query = (
         db.query(Doctor, Availability, Clinic)
         .join(Availability, Availability.doctor_id == Doctor.id)
         .join(Clinic, Clinic.id == Availability.clinic_id)
-        .filter(func.lower(Doctor.speciality) == speciality.strip().lower())
-        .order_by(Doctor.id.asc(), Clinic.id.asc(), Availability.day.asc())
-        .all()
     )
+
+    if name is not None and name.strip():
+        normalized_name = name.strip().lower()
+        query = query.filter(func.lower(Doctor.name).contains(normalized_name))
+
+    if speciality is not None and speciality.strip():
+        normalized = speciality.strip().lower()
+        query = query.filter(func.lower(Doctor.speciality).contains(normalized))
+
+    if doctor_id is not None:
+        query = query.filter(Doctor.id == doctor_id)
+
+    if clinic_id is not None:
+        query = query.filter(Clinic.id == clinic_id)
+
+    rows = query.order_by(Doctor.id.asc(), Clinic.id.asc(), Availability.day.asc()).all()
 
     return [
         {

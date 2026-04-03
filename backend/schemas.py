@@ -34,6 +34,7 @@ class LeaveCreateRequest(BaseModel):
     start_date: date
     end_date: date
     reason: str
+    number_of_leaves: int | None = None
 
 
 class AppointmentCreateRequest(BaseModel):
@@ -89,10 +90,23 @@ class SearchOut(BaseModel):
 class AvailabilityByDateOut(BaseModel):
     doctor_id: int
     available_slots: list[str]
+    is_on_leave: bool = False
+    leave_reason: Optional[str] = None
+
+
+class LeaveOut(BaseModel):
+    id: int
+    doctor_id: int
+    doctor_name: str
+    start_date: date
+    end_date: date
+    reason: str
+    number_of_leaves: int
 
 
 class AppointmentOut(BaseModel):
     appointment_id: int
+    patient_id: int
     doctor_id: int
     clinic_id: int
     date: date
