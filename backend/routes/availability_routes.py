@@ -98,21 +98,21 @@ def create_availability(
 
 @router.get("/availability", response_model=list[AvailabilityOut])
 def list_availability(
-    doctor_id: int = Query(...),
+    doctor_id: int = Query(None),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user),
 ):
-    doctor = db.get(Doctor, doctor_id)
-    if doctor is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
-
-    rows = (
-        db.query(Availability, Clinic)
-        .join(Clinic, Clinic.id == Availability.clinic_id)
-        .filter(Availability.doctor_id == doctor_id)
-        .order_by(Availability.day.asc(), Availability.start_time.asc())
-        .all()
-    )
+    # If doctor_id provided, filter by doctor; otherwise return all availability
+    if doctor_id is not None:
+        doctor = db.get(Doctor, doctor_id)
+        if doctor is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
+        query = db.query(Availability, Clinic).join(Clinic, Clinic.id == Availability.clinic_id).filter(Availability.doctor_id == doctor_id)
+    else:
+        # Return all availability across all doctors
+        query = db.query(Availability, Clinic).join(Clinic, Clinic.id == Availability.clinic_id)
+    
+    rows = query.order_by(Availability.day.asc(), Availability.start_time.asc()).all()
 
     result = []
     for availability, clinic in rows:
