@@ -4,16 +4,18 @@ import { useMockApi } from '../context/MockApiContext.jsx'
 const linksByRole = {
   admin: [
     { to: '/app/doctors', label: 'Doctors' },
-    { to: '/app/clinics', label: 'Clinics' },
-    { to: '/app/mapping', label: 'Mapping' },
-    { to: '/app/availability', label: 'Availability' },
+    { to: '/app/doctor-dashboard', label: 'Doctor Insights' },
+    { to: '/app/availability', label: 'Schedules' },
     { to: '/app/leaves', label: 'Leaves' },
     { to: '/app/appointments', label: 'Appointments' },
-    { to: '/app/utilization', label: 'Utilization' },
+    { to: '/app/dashboard', label: 'Dashboard' },
   ],
   patient: [
     { to: '/app/search', label: 'Search Doctors' },
     { to: '/app/book', label: 'Book Appointment' },
+    { to: '/app/appointments', label: 'My Appointments' },
+  ],
+  doctor: [
     { to: '/app/appointments', label: 'My Appointments' },
   ],
 }
@@ -39,7 +41,7 @@ function Navbar() {
     }
 
     logout()
-    navigate('/signin', { replace: true })
+    navigate('/', { replace: true })
   }
 
   return (

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import LoadingSpinner from '../components/LoadingSpinner.jsx'
 import PageHeader from '../components/PageHeader.jsx'
 import { LEAVE_REASON_OPTIONS } from '../constants/appConstants.js'
 import { useMockApi } from '../context/MockApiContext.jsx'
@@ -85,6 +86,43 @@ function LeavesPage() {
     [leaves, filterDoctorId],
   )
 
+  let leavesContent = (
+    <div className="mt-4 overflow-x-auto">
+      <table className="w-full min-w-[660px] border-separate border-spacing-y-2 text-left text-sm">
+        <thead>
+          <tr className="text-slate-500">
+            <th className="px-3 py-2">Doctor</th>
+            <th className="px-3 py-2">Reason</th>
+            <th className="px-3 py-2">Start Date</th>
+            <th className="px-3 py-2">End Date</th>
+            <th className="px-3 py-2">Leaves</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredLeaves.map((row) => (
+            <tr key={row.id} className="bg-slate-50 text-slate-700">
+              <td className="px-3 py-3 font-semibold text-slate-900">{row.doctor_name}</td>
+              <td className="px-3 py-3">{row.reason}</td>
+              <td className="px-3 py-3">{row.start_date}</td>
+              <td className="px-3 py-3">{row.end_date}</td>
+              <td className="px-3 py-3 font-semibold">{row.number_of_leaves}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+
+  if (isLoading) {
+    leavesContent = <LoadingSpinner className="mt-4" label="Loading leaves..." />
+  } else if (filteredLeaves.length === 0) {
+    leavesContent = (
+      <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+        No leaves assigned yet.
+      </p>
+    )
+  }
+
   const handleFieldChange = (event) => {
     const { name, value } = event.target
     setForm((prev) => ({
@@ -138,7 +176,7 @@ function LeavesPage() {
     <section>
       <PageHeader
         title="Doctor Leave Management"
-        subtitle="Assign doctor leaves with reason taxonomy and date range. Booking is blocked automatically on leave dates."
+        subtitle="Assign doctor leaves with reason taxonomy; availability and booking are blocked during leave windows."
       />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.45fr]">
@@ -254,38 +292,7 @@ function LeavesPage() {
             </select>
           </div>
 
-          {isLoading ? (
-            <p className="mt-4 text-sm text-slate-500">Loading leaves...</p>
-          ) : filteredLeaves.length === 0 ? (
-            <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-              No leaves assigned yet.
-            </p>
-          ) : (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[660px] border-separate border-spacing-y-2 text-left text-sm">
-                <thead>
-                  <tr className="text-slate-500">
-                    <th className="px-3 py-2">Doctor</th>
-                    <th className="px-3 py-2">Reason</th>
-                    <th className="px-3 py-2">Start Date</th>
-                    <th className="px-3 py-2">End Date</th>
-                    <th className="px-3 py-2">Leaves</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredLeaves.map((row) => (
-                    <tr key={row.id} className="bg-slate-50 text-slate-700">
-                      <td className="px-3 py-3 font-semibold text-slate-900">{row.doctor_name}</td>
-                      <td className="px-3 py-3">{row.reason}</td>
-                      <td className="px-3 py-3">{row.start_date}</td>
-                      <td className="px-3 py-3">{row.end_date}</td>
-                      <td className="px-3 py-3 font-semibold">{row.number_of_leaves}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {leavesContent}
         </section>
       </div>
     </section>

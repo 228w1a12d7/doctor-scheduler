@@ -1,21 +1,31 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import LoadingSpinner from '../components/LoadingSpinner.jsx'
 import PageHeader from '../components/PageHeader.jsx'
-import { PLACEHOLDER_IMAGE } from '../constants/appConstants.js'
+import { APPOINTMENT_MODES, PLACEHOLDER_IMAGE } from '../constants/appConstants.js'
 import { useMockApi } from '../context/MockApiContext.jsx'
 
 const emptyForm = {
   name: '',
+  email: '',
   speciality: '',
+  mode: 'online',
+  fee: '',
+  active: true,
+  meeting_link: '',
+  clinic_address: '',
+  location_latitude: '',
+  location_longitude: '',
   imageFile: null,
   imagePreview: '',
 }
 
 function DoctorsPage() {
-  const { addDoctor, updateDoctor, deleteDoctor, getDoctors } = useMockApi()
+  const { addDoctor, updateDoctor, deleteDoctor, getDoctors, getSpecialties } = useMockApi()
   const [form, setForm] = useState(emptyForm)
-  const [doctors, setDoctors] = useState([])
-  const [editingDoctorId, setEditingDoctorId] = useState(null)
   const [editForm, setEditForm] = useState(emptyForm)
+  const [doctors, setDoctors] = useState([])
+  const [specialties, setSpecialties] = useState([])
+  const [editingDoctorId, setEditingDoctorId] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isMutatingRowId, setIsMutatingRowId] = useState(null)
@@ -27,58 +37,83 @@ function DoctorsPage() {
   useEffect(() => {
     let mounted = true
 
-    const loadDoctors = async () => {
+    const loadData = async (isInitial = false) => {
       try {
-        const list = await getDoctors()
-        if (mounted) {
-          setDoctors(list)
+        const [doctorRows, specialtyRows] = await Promise.all([getDoctors(), getSpecialties()])
+        if (!mounted) {
+          return
         }
+
+        setDoctors(doctorRows)
+        setSpecialties(specialtyRows)
       } catch (loadError) {
         if (mounted) {
           setError(loadError.message)
         }
       } finally {
-        if (mounted) {
+        if (mounted && isInitial) {
           setIsLoading(false)
         }
       }
     }
 
-    void loadDoctors()
+    void loadData(true)
+    const intervalId = window.setInterval(() => {
+      void loadData(false)
+    }, 15000)
 
     return () => {
       mounted = false
+      window.clearInterval(intervalId)
     }
-  }, [getDoctors])
+  }, [getDoctors, getSpecialties])
 
-  useEffect(
-    () => () => {
-      if (form.imagePreview.startsWith('blob:')) {
-        URL.revokeObjectURL(form.imagePreview)
-      }
-
-      if (editForm.imagePreview.startsWith('blob:')) {
-        URL.revokeObjectURL(editForm.imagePreview)
-      }
-    },
-    [form.imagePreview, editForm.imagePreview],
+  const specialtyNames = useMemo(
+    () => specialties.map((item) => item.name).sort((a, b) => a.localeCompare(b)),
+    [specialties],
   )
 
-  const handleFieldChange = (event) => {
-    const { name, value } = event.target
-    setForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }))
+  const reloadDoctors = async () => {
+    const rows = await getDoctors()
+    setDoctors(rows)
   }
 
-  const handleImageChange = (event) => {
+  const handleFieldChange = (event) => {
+    const { name, value, type, checked } = event.target
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        [name]: type === 'checkbox' ? checked : value,
+      }
+
+      if (name === 'mode' && value === 'online') {
+        next.clinic_address = ''
+      }
+
+      if (name === 'mode' && value === 'offline') {
+        next.meeting_link = ''
+      }
+
+      return next
+    })
+  }
+
+  const handleImageChange = (event, isEdit = false) => {
     const file = event.target.files?.[0]
     if (!file) {
       return
     }
 
     const previewUrl = URL.createObjectURL(file)
+
+    if (isEdit) {
+      setEditForm((prev) => ({
+        ...prev,
+        imageFile: file,
+        imagePreview: previewUrl,
+      }))
+      return
+    }
 
     setForm((prev) => ({
       ...prev,
@@ -89,19 +124,29 @@ function DoctorsPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    setIsSubmitting(true)
-    setFeedback('')
     setError('')
+    setFeedback('')
+    setIsSubmitting(true)
 
     try {
-      const response = await addDoctor({
+      const payload = {
         name: form.name.trim(),
+        email: form.email.trim(),
         speciality: form.speciality.trim(),
+        mode: form.mode,
+        fee: Number(form.fee),
+        active: form.active,
+        meeting_link: form.mode === 'online' ? form.meeting_link.trim() : '',
+        clinic_address: form.mode === 'offline' ? form.clinic_address.trim() : '',
+        location_latitude:
+          form.location_latitude === '' ? '' : Number(form.location_latitude),
+        location_longitude:
+          form.location_longitude === '' ? '' : Number(form.location_longitude),
         imageFile: form.imageFile,
-      })
+      }
 
-      const updatedDoctors = await getDoctors()
-      setDoctors(updatedDoctors)
+      const response = await addDoctor(payload)
+      await reloadDoctors()
       setFeedback(`${response.message} (id: ${response.id})`)
       setForm(emptyForm)
       setFileInputKey((prev) => prev + 1)
@@ -112,36 +157,25 @@ function DoctorsPage() {
     }
   }
 
-  const handleEditFieldChange = (event) => {
-    const { name, value } = event.target
-    setEditForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }))
-  }
-
-  const handleEditImageChange = (event) => {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-
-    const previewUrl = URL.createObjectURL(file)
-
-    setEditForm((prev) => ({
-      ...prev,
-      imageFile: file,
-      imagePreview: previewUrl,
-    }))
-  }
-
   const startEditing = (doctor) => {
-    setError('')
-    setFeedback('')
     setEditingDoctorId(doctor.id)
     setEditForm({
       name: doctor.name,
+      email: doctor.email || '',
       speciality: doctor.speciality,
+      mode: doctor.mode,
+      fee: doctor.fee,
+      active: doctor.active,
+      meeting_link: doctor.meeting_link || '',
+      clinic_address: doctor.clinic_address || '',
+      location_latitude:
+        doctor.location_latitude === null || doctor.location_latitude === undefined
+          ? ''
+          : String(doctor.location_latitude),
+      location_longitude:
+        doctor.location_longitude === null || doctor.location_longitude === undefined
+          ? ''
+          : String(doctor.location_longitude),
       imageFile: null,
       imagePreview: doctor.image || '',
     })
@@ -153,6 +187,23 @@ function DoctorsPage() {
     setEditForm(emptyForm)
   }
 
+  const handleEditFieldChange = (event) => {
+    const { name, value, type, checked } = event.target
+    setEditForm((prev) => {
+      const next = {
+        ...prev,
+        [name]: type === 'checkbox' ? checked : value,
+      }
+      if (name === 'mode' && value === 'online') {
+        next.clinic_address = ''
+      }
+      if (name === 'mode' && value === 'offline') {
+        next.meeting_link = ''
+      }
+      return next
+    })
+  }
+
   const handleUpdateDoctor = async (doctorId) => {
     setError('')
     setFeedback('')
@@ -162,12 +213,21 @@ function DoctorsPage() {
       const response = await updateDoctor({
         id: doctorId,
         name: editForm.name.trim(),
+        email: editForm.email.trim(),
         speciality: editForm.speciality.trim(),
+        mode: editForm.mode,
+        fee: Number(editForm.fee),
+        active: editForm.active,
+        meeting_link: editForm.mode === 'online' ? editForm.meeting_link.trim() : '',
+        clinic_address: editForm.mode === 'offline' ? editForm.clinic_address.trim() : '',
+        location_latitude:
+          editForm.location_latitude === '' ? '' : Number(editForm.location_latitude),
+        location_longitude:
+          editForm.location_longitude === '' ? '' : Number(editForm.location_longitude),
         imageFile: editForm.imageFile,
       })
 
-      const updatedDoctors = await getDoctors()
-      setDoctors(updatedDoctors)
+      await reloadDoctors()
       setFeedback(response.message)
       cancelEditing()
     } catch (updateError) {
@@ -178,7 +238,7 @@ function DoctorsPage() {
   }
 
   const handleDeleteDoctor = async (doctorId) => {
-    const confirmed = window.confirm('Delete this doctor? This will remove linked mapping, availability and appointments.')
+    const confirmed = window.confirm('Delete this doctor and related schedules/appointments?')
     if (!confirmed) {
       return
     }
@@ -189,8 +249,7 @@ function DoctorsPage() {
 
     try {
       const response = await deleteDoctor(doctorId)
-      const updatedDoctors = await getDoctors()
-      setDoctors(updatedDoctors)
+      await reloadDoctors()
       setFeedback(response.message)
       if (editingDoctorId === doctorId) {
         cancelEditing()
@@ -206,13 +265,19 @@ function DoctorsPage() {
     <section>
       <PageHeader
         title="Doctor Management"
-        subtitle="Add doctors using FormData-like fields (name, speciality, image) and preview image before submitting."
+        subtitle="Admin can add, update, and delete doctors with speciality, mode, fee, active status, online meeting links, image, and offline clinic address."
       />
+
+      <datalist id="speciality-options">
+        {specialtyNames.map((specialityName) => (
+          <option key={specialityName} value={specialityName} />
+        ))}
+      </datalist>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.45fr]">
         <form
           onSubmit={handleSubmit}
-          className="rounded-3xl border border-teal-100 bg-white/85 p-6 shadow-lg shadow-teal-100/50"
+          className="rounded-3xl border border-teal-100 bg-white/85 p-6 shadow-lg shadow-teal-100/40"
         >
           <h3 className="text-xl font-semibold">Add Doctor</h3>
 
@@ -230,25 +295,144 @@ function DoctorsPage() {
             </label>
 
             <label className="block">
+              <span className="mb-1 block text-sm font-semibold text-slate-700">Email</span>
+              <input
+                required
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={handleFieldChange}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
+                placeholder="doctor@example.com"
+              />
+            </label>
+
+            <label className="block">
               <span className="mb-1 block text-sm font-semibold text-slate-700">Speciality</span>
               <input
                 required
                 name="speciality"
                 value={form.speciality}
+                list="speciality-options"
                 onChange={handleFieldChange}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
                 placeholder="Cardiology"
               />
             </label>
 
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Mode</span>
+                <select
+                  required
+                  name="mode"
+                  value={form.mode}
+                  onChange={handleFieldChange}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
+                >
+                  {APPOINTMENT_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {mode}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Fee</span>
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  name="fee"
+                  value={form.fee}
+                  onChange={handleFieldChange}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
+                  placeholder="500"
+                />
+              </label>
+            </div>
+
+            {form.mode === 'online' && (
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Meeting Link</span>
+                <input
+                  required
+                  type="url"
+                  name="meeting_link"
+                  value={form.meeting_link}
+                  onChange={handleFieldChange}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
+                  placeholder="https://meet.google.com/your-room"
+                />
+              </label>
+            )}
+
+            {form.mode === 'offline' && (
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Clinic Address</span>
+                <input
+                  required
+                  name="clinic_address"
+                  value={form.clinic_address}
+                  onChange={handleFieldChange}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
+                  placeholder="Hitech City, Hyderabad"
+                />
+              </label>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Location Latitude</span>
+                <input
+                  type="number"
+                  step="0.000001"
+                  min="-90"
+                  max="90"
+                  name="location_latitude"
+                  value={form.location_latitude}
+                  onChange={handleFieldChange}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
+                  placeholder="17.3850"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Location Longitude</span>
+                <input
+                  type="number"
+                  step="0.000001"
+                  min="-180"
+                  max="180"
+                  name="location_longitude"
+                  value={form.location_longitude}
+                  onChange={handleFieldChange}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
+                  placeholder="78.4867"
+                />
+              </label>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                name="active"
+                checked={form.active}
+                onChange={handleFieldChange}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              <span>Active Doctor</span>
+            </label>
+
             <label className="block">
-              <span className="mb-1 block text-sm font-semibold text-slate-700">Image (required)</span>
+              <span className="mb-1 block text-sm font-semibold text-slate-700">Image (optional)</span>
               <input
                 key={fileInputKey}
-                required
                 type="file"
                 accept="image/*"
-                onChange={handleImageChange}
+                onChange={(event) => handleImageChange(event)}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none file:mr-3 file:rounded-lg file:border-0 file:bg-teal-700 file:px-3 file:py-1.5 file:text-white"
               />
             </label>
@@ -285,17 +469,15 @@ function DoctorsPage() {
 
         <section className="rounded-3xl border border-slate-200 bg-white/85 p-6 shadow-lg shadow-slate-100/70">
           <h3 className="text-xl font-semibold">Doctors List</h3>
-          <p className="mt-1 text-sm text-slate-600">Response shape: [ id, name, speciality, image ]</p>
+          <p className="mt-1 text-sm text-slate-600">Mode and active status drive online/offline appointment eligibility.</p>
+          <p className="mt-1 text-[11px] uppercase tracking-wide text-slate-500">Auto-refresh every 15 seconds</p>
 
           {isLoading ? (
-            <p className="mt-4 text-sm text-slate-500">Loading doctors...</p>
+            <LoadingSpinner className="mt-4" label="Loading doctors..." />
           ) : (
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               {doctors.map((doctor) => (
-                <article
-                  key={doctor.id}
-                  className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
-                >
+                <article key={doctor.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <img
                     src={
                       editingDoctorId === doctor.id
@@ -320,16 +502,108 @@ function DoctorsPage() {
                         className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
                       />
                       <input
+                        name="email"
+                        type="email"
+                        value={editForm.email}
+                        onChange={handleEditFieldChange}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
+                        placeholder="doctor@example.com"
+                      />
+                      <input
                         name="speciality"
                         value={editForm.speciality}
+                        list="speciality-options"
                         onChange={handleEditFieldChange}
                         className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
                       />
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <select
+                          name="mode"
+                          value={editForm.mode}
+                          onChange={handleEditFieldChange}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
+                        >
+                          {APPOINTMENT_MODES.map((mode) => (
+                            <option key={mode} value={mode}>
+                              {mode}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          name="fee"
+                          value={editForm.fee}
+                          onChange={handleEditFieldChange}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
+                        />
+                      </div>
+
+                      {editForm.mode === 'online' && (
+                        <input
+                          type="url"
+                          required
+                          name="meeting_link"
+                          value={editForm.meeting_link}
+                          onChange={handleEditFieldChange}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
+                          placeholder="Meeting link"
+                        />
+                      )}
+
+                      {editForm.mode === 'offline' && (
+                        <input
+                          name="clinic_address"
+                          value={editForm.clinic_address}
+                          onChange={handleEditFieldChange}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
+                          placeholder="Clinic address"
+                        />
+                      )}
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <input
+                          type="number"
+                          step="0.000001"
+                          min="-90"
+                          max="90"
+                          name="location_latitude"
+                          value={editForm.location_latitude}
+                          onChange={handleEditFieldChange}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
+                          placeholder="Latitude"
+                        />
+                        <input
+                          type="number"
+                          step="0.000001"
+                          min="-180"
+                          max="180"
+                          name="location_longitude"
+                          value={editForm.location_longitude}
+                          onChange={handleEditFieldChange}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
+                          placeholder="Longitude"
+                        />
+                      </div>
+
+                      <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                        <input
+                          type="checkbox"
+                          name="active"
+                          checked={editForm.active}
+                          onChange={handleEditFieldChange}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        <span>Active</span>
+                      </label>
+
                       <input
                         key={editFileInputKey}
                         type="file"
                         accept="image/*"
-                        onChange={handleEditImageChange}
+                        onChange={(event) => handleImageChange(event, true)}
                         className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none file:mr-3 file:rounded-lg file:border-0 file:bg-teal-700 file:px-3 file:py-1.5 file:text-white"
                       />
 
@@ -354,10 +628,47 @@ function DoctorsPage() {
                   ) : (
                     <>
                       <h4 className="mt-3 text-lg font-semibold">{doctor.name}</h4>
+                      {doctor.email && <p className="text-sm text-slate-600">{doctor.email}</p>}
                       <p className="text-sm text-slate-600">{doctor.speciality}</p>
-                      <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-teal-700">
-                        id: {doctor.id}
-                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                        <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">
+                          {doctor.mode}
+                        </span>
+                        <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-700">
+                          Fee: {doctor.fee}
+                        </span>
+                        <span
+                          className={[
+                            'rounded-full px-2 py-1 font-semibold',
+                            doctor.active
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-slate-200 text-slate-700',
+                          ].join(' ')}
+                        >
+                          {doctor.active ? 'Approved' : 'Pending/Inactive'}
+                        </span>
+                      </div>
+
+                      {doctor.mode === 'offline' && doctor.clinic_address && (
+                        <p className="mt-2 text-xs text-slate-600">Address: {doctor.clinic_address}</p>
+                      )}
+
+                      {doctor.location_map_url && (
+                        <a
+                          href={doctor.location_map_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 inline-flex text-xs font-semibold text-teal-700 hover:text-teal-900"
+                        >
+                          View location on map
+                        </a>
+                      )}
+
+                      {doctor.mode === 'online' && doctor.meeting_link && (
+                        <p className="mt-2 truncate text-xs text-slate-600">Meeting: {doctor.meeting_link}</p>
+                      )}
+
+                      <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-teal-700">id: {doctor.id}</p>
 
                       <div className="mt-3 flex gap-2">
                         <button

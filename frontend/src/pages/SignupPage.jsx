@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
-import { USER_ROLES } from '../constants/appConstants.js'
+import { PATIENT_GENDERS, USER_ROLES } from '../constants/appConstants.js'
 import { useMockApi } from '../context/MockApiContext.jsx'
 
 function SignupPage() {
@@ -10,6 +10,9 @@ function SignupPage() {
     email: '',
     password: '',
     role: 'patient',
+    contact: '',
+    dob: '',
+    gender: 'Female',
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -21,10 +24,20 @@ function SignupPage() {
 
   const handleChange = (event) => {
     const { name, value } = event.target
-    setForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }))
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        [name]: value,
+      }
+
+      if (name === 'role' && value !== 'patient') {
+        next.contact = ''
+        next.dob = ''
+        next.gender = 'Female'
+      }
+
+      return next
+    })
   }
 
   const handleSubmit = async (event) => {
@@ -33,18 +46,29 @@ function SignupPage() {
     setError('')
 
     try {
-      const result = await signup({
+      const payload = {
         name: form.name.trim(),
         email: form.email.trim(),
         password: form.password,
         role: form.role,
-      })
+      }
+
+      if (form.role === 'patient') {
+        payload.contact = form.contact.trim()
+        payload.dob = form.dob
+        payload.gender = form.gender
+      }
+
+      const result = await signup(payload)
       setResponse(result)
       setForm({
         name: '',
         email: '',
         password: '',
         role: 'patient',
+        contact: '',
+        dob: '',
+        gender: 'Female',
       })
     } catch (submitError) {
       setError(submitError.message)
@@ -52,6 +76,8 @@ function SignupPage() {
       setIsSubmitting(false)
     }
   }
+
+  const isPatientRole = form.role === 'patient'
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-4 py-12 sm:px-6 lg:px-8">
@@ -64,7 +90,7 @@ function SignupPage() {
           <p className="mt-3 text-sm text-orange-50 sm:text-base">
             Signup request uses:
             {' '}
-            {`{ name, email, password, role }`}
+            {`{ name, email, password, role, contact?, dob? }`}
           </p>
           <p className="mt-2 text-sm text-orange-50 sm:text-base">
             Signup response shape:
@@ -127,6 +153,57 @@ function SignupPage() {
               ))}
             </select>
           </label>
+
+          {isPatientRole && (
+            <>
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Contact</span>
+                <input
+                  required
+                  name="contact"
+                  value={form.contact}
+                  onChange={handleChange}
+                  placeholder="9876543210"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-orange-500 focus:bg-white"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Date of Birth</span>
+                <input
+                  required
+                  type="date"
+                  name="dob"
+                  value={form.dob}
+                  onChange={handleChange}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-orange-500 focus:bg-white"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Gender</span>
+                <select
+                  required
+                  name="gender"
+                  value={form.gender}
+                  onChange={handleChange}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-orange-500 focus:bg-white"
+                >
+                  {PATIENT_GENDERS.map((genderOption) => (
+                    <option key={genderOption} value={genderOption}>
+                      {genderOption}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+
+          {!isPatientRole && form.role === 'doctor' && (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Doctor accounts require admin approval before signin is allowed.
+            </p>
+          )}
 
           {error && (
             <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">

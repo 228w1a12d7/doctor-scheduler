@@ -3,9 +3,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 const MockApiContext = createContext(null)
 const AUTH_STORAGE_KEY = 'doctor_scheduler_auth'
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
-const API_BASE_URLS = configuredApiBaseUrl
-  ? [configuredApiBaseUrl.replace(/\/+$/, '')]
-  : ['http://127.0.0.1:8001', 'http://127.0.0.1:8000']
+const DEFAULT_API_BASE_URLS = [
+  'http://127.0.0.1:8001',
+  'http://localhost:8001',
+  'http://127.0.0.1:8000',
+  'http://localhost:8000',
+]
+const API_BASE_URLS = Array.from(
+  new Set(
+    [configuredApiBaseUrl?.replace(/\/+$/, ''), ...DEFAULT_API_BASE_URLS].filter(Boolean),
+  ),
+)
 
 const getErrorMessage = async (response) => {
   const fallback = `Request failed (${response.status})`
@@ -58,8 +66,6 @@ export function MockApiProvider({ children }) {
     const stored = localStorage.getItem(AUTH_STORAGE_KEY)
     return stored ? JSON.parse(stored) : null
   })
-  const [mappingCache, setMappingCache] = useState([])
-  const [hasFetchedMappings, setHasFetchedMappings] = useState(false)
 
   useEffect(() => {
     if (auth) {
@@ -71,14 +77,7 @@ export function MockApiProvider({ children }) {
   }, [auth])
 
   const apiRequest = useCallback(
-    async ({
-      path,
-      method = 'GET',
-      body,
-      query,
-      isFormData = false,
-      authRequired = true,
-    }) => {
+    async ({ path, method = 'GET', body, query, isFormData = false, authRequired = true }) => {
       const headers = {
         Accept: 'application/json',
       }
@@ -119,17 +118,19 @@ export function MockApiProvider({ children }) {
           }
 
           const text = await response.text()
-          if (!text) {
-            return null
-          }
-
-          return JSON.parse(text)
+          return text ? JSON.parse(text) : null
         } catch (requestError) {
           const isNetworkError = requestError instanceof TypeError
           const hasAnotherCandidate = index < API_BASE_URLS.length - 1
 
           if (isNetworkError && hasAnotherCandidate) {
             continue
+          }
+
+          if (isNetworkError && !hasAnotherCandidate) {
+            throw new Error(
+              'Unable to reach backend API. Start backend server on 127.0.0.1:8001 (or set VITE_API_BASE_URL).',
+            )
           }
 
           throw requestError
@@ -141,7 +142,7 @@ export function MockApiProvider({ children }) {
     [auth?.token],
   )
 
-  const currentRole = auth?.user?.role ?? 'patient'
+  const currentRole = String(auth?.user?.role ?? 'patient').toLowerCase()
 
   const signup = useCallback(
     (payload) =>
@@ -164,8 +165,6 @@ export function MockApiProvider({ children }) {
       })
 
       setAuth(response)
-      setMappingCache([])
-      setHasFetchedMappings(false)
       return response
     },
     [apiRequest],
@@ -185,8 +184,11 @@ export function MockApiProvider({ children }) {
           ...prev.user,
           id: me.id,
           name: me.name,
+          email: me.email,
           role: me.role,
           patient_id: me.patient_id,
+          gender: me.gender,
+          doctor_id: me.doctor_id,
         },
       }
     })
@@ -208,9 +210,8 @@ export function MockApiProvider({ children }) {
     }
 
     const me = await fetchCurrentUser()
-
     if (!me?.patient_id) {
-      throw new Error('Patient profile not found for this user')
+      throw new Error('Patient profile not found')
     }
 
     return Number(me.patient_id)
@@ -218,15 +219,51 @@ export function MockApiProvider({ children }) {
 
   const logout = useCallback(() => {
     setAuth(null)
-    setMappingCache([])
-    setHasFetchedMappings(false)
   }, [])
+
+  const getSpecialties = useCallback(() => apiRequest({ path: '/specialties' }), [apiRequest])
+
+  const getDoctors = useCallback(
+    (filters = {}) =>
+      apiRequest({
+        path: '/doctors',
+        query: {
+          speciality: filters.speciality?.trim() || undefined,
+          mode: filters.mode?.trim() || undefined,
+          active_only:
+            filters.active_only === undefined || filters.active_only === null
+              ? undefined
+              : Boolean(filters.active_only),
+        },
+      }),
+    [apiRequest],
+  )
 
   const addDoctor = useCallback(
     (payload) => {
       const formData = new FormData()
       formData.append('name', payload.name)
+      formData.append('email', payload.email)
       formData.append('speciality', payload.speciality)
+      formData.append('mode', payload.mode)
+      formData.append('fee', String(payload.fee))
+      formData.append('active', String(Boolean(payload.active)))
+
+      if (payload.location_latitude !== '' && payload.location_latitude !== null && payload.location_latitude !== undefined) {
+        formData.append('location_latitude', String(payload.location_latitude))
+      }
+
+      if (payload.location_longitude !== '' && payload.location_longitude !== null && payload.location_longitude !== undefined) {
+        formData.append('location_longitude', String(payload.location_longitude))
+      }
+
+      if (payload.mode === 'online' && payload.meeting_link) {
+        formData.append('meeting_link', payload.meeting_link)
+      }
+
+      if (payload.mode === 'offline' && payload.clinic_address) {
+        formData.append('clinic_address', payload.clinic_address)
+      }
 
       if (payload.imageFile) {
         formData.append('image', payload.imageFile)
@@ -246,7 +283,27 @@ export function MockApiProvider({ children }) {
     (payload) => {
       const formData = new FormData()
       formData.append('name', payload.name)
+      formData.append('email', payload.email)
       formData.append('speciality', payload.speciality)
+      formData.append('mode', payload.mode)
+      formData.append('fee', String(payload.fee))
+      formData.append('active', String(Boolean(payload.active)))
+
+      if (payload.location_latitude !== '' && payload.location_latitude !== null && payload.location_latitude !== undefined) {
+        formData.append('location_latitude', String(payload.location_latitude))
+      }
+
+      if (payload.location_longitude !== '' && payload.location_longitude !== null && payload.location_longitude !== undefined) {
+        formData.append('location_longitude', String(payload.location_longitude))
+      }
+
+      if (payload.mode === 'online' && payload.meeting_link) {
+        formData.append('meeting_link', payload.meeting_link)
+      }
+
+      if (payload.mode === 'offline' && payload.clinic_address) {
+        formData.append('clinic_address', payload.clinic_address)
+      }
 
       if (payload.imageFile) {
         formData.append('image', payload.imageFile)
@@ -271,129 +328,34 @@ export function MockApiProvider({ children }) {
     [apiRequest],
   )
 
-  const getDoctors = useCallback(() => apiRequest({ path: '/doctors' }), [apiRequest])
-
-  const addClinic = useCallback(
-    (payload) => {
-      const formData = new FormData()
-      formData.append('name', payload.name)
-      formData.append('location', payload.location)
-
-      if (payload.imageFile) {
-        formData.append('image', payload.imageFile)
-      }
-
-      return apiRequest({
-        path: '/clinics',
-        method: 'POST',
-        body: formData,
-        isFormData: true,
-      })
-    },
-    [apiRequest],
-  )
-
-  const updateClinic = useCallback(
-    (payload) => {
-      const formData = new FormData()
-      formData.append('name', payload.name)
-      formData.append('location', payload.location)
-
-      if (payload.imageFile) {
-        formData.append('image', payload.imageFile)
-      }
-
-      return apiRequest({
-        path: `/clinics/${Number(payload.id)}`,
-        method: 'PUT',
-        body: formData,
-        isFormData: true,
-      })
-    },
-    [apiRequest],
-  )
-
-  const deleteClinic = useCallback(
-    (clinicId) =>
-      apiRequest({
-        path: `/clinics/${Number(clinicId)}`,
-        method: 'DELETE',
-      }),
-    [apiRequest],
-  )
-
-  const getClinics = useCallback(() => apiRequest({ path: '/clinics' }), [apiRequest])
-
-  const mapDoctorToClinic = useCallback(
-    async (payload) => {
-      const response = await apiRequest({
-        path: '/doctor-clinic',
-        method: 'POST',
-        body: {
-          doctor_id: Number(payload.doctor_id),
-          clinic_id: Number(payload.clinic_id),
-        },
-      })
-
-      setMappingCache((prev) => {
-        const exists = prev.some(
-          (item) =>
-            item.doctor_id === Number(payload.doctor_id) &&
-            item.clinic_id === Number(payload.clinic_id),
-        )
-
-        if (exists) {
-          return prev
-        }
-
-        return [
-          ...prev,
-          {
-            doctor_id: Number(payload.doctor_id),
-            clinic_id: Number(payload.clinic_id),
-          },
-        ]
-      })
-      setHasFetchedMappings(true)
-
-      return response
-    },
-    [apiRequest],
-  )
-
-  const getAvailability = useCallback(
-    (doctorId) =>
-      apiRequest({
-        path: '/availability',
-        query: doctorId ? { doctor_id: Number(doctorId) } : undefined,
-      }),
-    [apiRequest],
-  )
-
-  const getMappings = useCallback(async () => {
-    if (hasFetchedMappings) {
-      return [...mappingCache]
-    }
-
-    const mappingRows = await apiRequest({ path: '/doctor-clinic' })
-    const normalizedRows = Array.isArray(mappingRows) ? mappingRows : []
-
-    setMappingCache(normalizedRows)
-    setHasFetchedMappings(true)
-    return normalizedRows
-  }, [hasFetchedMappings, mappingCache, apiRequest])
-
-  const addAvailability = useCallback(
+  const addDoctorSchedule = useCallback(
     (payload) =>
       apiRequest({
-        path: '/availability',
+        path: '/doctor-schedules',
         method: 'POST',
         body: {
           doctor_id: Number(payload.doctor_id),
-          clinic_id: Number(payload.clinic_id),
-          day: payload.day,
+          date: payload.date,
           start_time: payload.start_time,
           end_time: payload.end_time,
+          booked: false,
+        },
+      }),
+    [apiRequest],
+  )
+
+  const getDoctorSchedules = useCallback(
+    (filters = {}) =>
+      apiRequest({
+        path: '/doctor-schedules',
+        query: {
+          doctor_id: filters.doctor_id ? Number(filters.doctor_id) : undefined,
+          date: filters.date || undefined,
+          mode: filters.mode || undefined,
+          include_booked:
+            filters.include_booked === undefined
+              ? undefined
+              : Boolean(filters.include_booked),
         },
       }),
     [apiRequest],
@@ -416,28 +378,13 @@ export function MockApiProvider({ children }) {
   )
 
   const getLeaves = useCallback(
-    (doctorId) =>
+    (filters = {}) =>
       apiRequest({
         path: '/leaves',
-        query: doctorId ? { doctor_id: Number(doctorId) } : undefined,
+        query: {
+          doctor_id: filters.doctor_id ? Number(filters.doctor_id) : undefined,
+        },
       }),
-    [apiRequest],
-  )
-
-  const searchDoctors = useCallback(
-    (filters = {}) => {
-      const query = {
-        name: filters.name?.trim() || undefined,
-        speciality: filters.speciality?.trim() || undefined,
-        doctor_id: filters.doctor_id ? Number(filters.doctor_id) : undefined,
-        clinic_id: filters.clinic_id ? Number(filters.clinic_id) : undefined,
-      }
-
-      return apiRequest({
-        path: '/search',
-        query,
-      })
-    },
     [apiRequest],
   )
 
@@ -447,8 +394,25 @@ export function MockApiProvider({ children }) {
         path: '/availability-by-date',
         query: {
           doctor_id: Number(payload.doctor_id),
-          clinic_id: Number(payload.clinic_id),
           date: payload.date,
+          mode: payload.mode || undefined,
+        },
+      }),
+    [apiRequest],
+  )
+
+  const searchDoctors = useCallback(
+    (filters = {}) =>
+      apiRequest({
+        path: '/search',
+        query: {
+          name: filters.name?.trim() || undefined,
+          speciality: filters.speciality?.trim() || undefined,
+          mode: filters.mode?.trim() || undefined,
+          active_only:
+            filters.active_only === undefined || filters.active_only === null
+              ? undefined
+              : Boolean(filters.active_only),
         },
       }),
     [apiRequest],
@@ -456,52 +420,38 @@ export function MockApiProvider({ children }) {
 
   const createAppointment = useCallback(
     async (payload) => {
-      const patientId = await ensurePatientId()
+      await ensurePatientId()
 
       return apiRequest({
         path: '/appointments',
         method: 'POST',
         body: {
-          patient_id: patientId,
           doctor_id: Number(payload.doctor_id),
-          clinic_id: Number(payload.clinic_id),
-          date: payload.date,
-          time: payload.time,
+          schedule_id: Number(payload.schedule_id),
+          mode: payload.mode,
         },
       })
     },
     [apiRequest, ensurePatientId],
   )
 
-  const getAppointments = useCallback(async () => {
-    if (!auth?.user) {
-      return []
-    }
-
-    const role = String(auth.user.role).toLowerCase()
-
-    if (role === 'admin') {
-      return apiRequest({
+  const getAppointments = useCallback(
+    (filters = {}) =>
+      apiRequest({
         path: '/appointments',
-      })
-    }
+        query: {
+          patient_id: filters.patient_id ? Number(filters.patient_id) : undefined,
+          doctor_id: filters.doctor_id ? Number(filters.doctor_id) : undefined,
+          date: filters.date || undefined,
+        },
+      }),
+    [apiRequest],
+  )
 
-    if (role !== 'patient') {
-      return []
-    }
-
-    const patientId = await ensurePatientId()
-
-    return apiRequest({
-      path: '/appointments',
-      query: { patient_id: patientId },
-    })
-  }, [auth?.user, ensurePatientId, apiRequest])
-
-  const updateAppointment = useCallback(
+  const updateAppointmentStatus = useCallback(
     (payload) =>
       apiRequest({
-        path: `/appointments/${Number(payload.appointment_id)}`,
+        path: `/appointments/${Number(payload.appointment_id)}/status`,
         method: 'PUT',
         body: {
           status: payload.status,
@@ -510,11 +460,15 @@ export function MockApiProvider({ children }) {
     [apiRequest],
   )
 
-  const getUtilization = useCallback(
-    (clinicId) =>
+  const getDailySummary = useCallback(
+    (filters = {}) =>
       apiRequest({
-        path: '/utilization',
-        query: { clinic_id: Number(clinicId) },
+        path: '/dashboard/daily-summary',
+        query: {
+          date: filters.date || undefined,
+          mode: filters.mode || undefined,
+          speciality_id: filters.speciality_id ? Number(filters.speciality_id) : undefined,
+        },
       }),
     [apiRequest],
   )
@@ -527,26 +481,22 @@ export function MockApiProvider({ children }) {
       login,
       logout,
       fetchCurrentUser,
+      ensurePatientId,
+      getSpecialties,
+      getDoctors,
       addDoctor,
       updateDoctor,
       deleteDoctor,
-      getDoctors,
-      addClinic,
-      updateClinic,
-      deleteClinic,
-      getClinics,
-      mapDoctorToClinic,
-      getMappings,
-      addAvailability,
+      addDoctorSchedule,
+      getDoctorSchedules,
       createLeave,
       getLeaves,
-      getAvailability,
-      searchDoctors,
       getAvailabilityByDate,
+      searchDoctors,
       createAppointment,
       getAppointments,
-      updateAppointment,
-      getUtilization,
+      updateAppointmentStatus,
+      getDailySummary,
     }),
     [
       auth,
@@ -555,26 +505,22 @@ export function MockApiProvider({ children }) {
       login,
       logout,
       fetchCurrentUser,
+      ensurePatientId,
+      getSpecialties,
+      getDoctors,
       addDoctor,
       updateDoctor,
       deleteDoctor,
-      getDoctors,
-      addClinic,
-      updateClinic,
-      deleteClinic,
-      getClinics,
-      mapDoctorToClinic,
-      getMappings,
-      addAvailability,
+      addDoctorSchedule,
+      getDoctorSchedules,
       createLeave,
       getLeaves,
-      getAvailability,
-      searchDoctors,
       getAvailabilityByDate,
+      searchDoctors,
       createAppointment,
       getAppointments,
-      updateAppointment,
-      getUtilization,
+      updateAppointmentStatus,
+      getDailySummary,
     ],
   )
 
