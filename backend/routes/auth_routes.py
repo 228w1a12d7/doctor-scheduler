@@ -4,11 +4,11 @@ from sqlalchemy.orm import Session
 
 from auth import create_access_token, get_current_user, hash_password, verify_password
 from database import get_db
-from models import Doctor, Patient, Specialty, User
+from models import Doctor, Patient, User
 from schemas import LoginRequest, SignupRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-VALID_ROLES = {"admin", "patient", "doctor"}
+VALID_ROLES = {"admin", "patient"}
 PATIENT_GENDER_TAXONOMY = {
     "male": "Male",
     "female": "Female",
@@ -16,7 +16,6 @@ PATIENT_GENDER_TAXONOMY = {
     "prefer_not_to_say": "Prefer not to say",
     "prefer not to say": "Prefer not to say",
 }
-DEFAULT_DOCTOR_SPECIALITY = "General Physician"
 
 
 def normalize_patient_gender(value: str) -> str:
@@ -28,21 +27,6 @@ def normalize_patient_gender(value: str) -> str:
             detail="gender must be Male, Female, Other, or Prefer not to say",
         )
     return mapped
-
-
-def get_or_create_default_speciality(db: Session) -> Specialty:
-    existing = (
-        db.query(Specialty)
-        .filter(func.lower(Specialty.name) == DEFAULT_DOCTOR_SPECIALITY.lower())
-        .first()
-    )
-    if existing is not None:
-        return existing
-
-    specialty = Specialty(name=DEFAULT_DOCTOR_SPECIALITY)
-    db.add(specialty)
-    db.flush()
-    return specialty
 
 
 @router.post("/signup")
@@ -58,7 +42,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if role not in VALID_ROLES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Role must be admin, patient, or doctor",
+            detail="Role must be admin or patient",
         )
     if role == "patient":
         if not payload.contact or not payload.contact.strip():
@@ -92,7 +76,6 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     )
     db.add(user)
     db.flush()
-    doctor_pending_approval = False
 
     if role == "patient":
         normalized_gender = normalize_patient_gender(payload.gender)
@@ -105,38 +88,10 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
             email=normalized_email,
         )
         db.add(patient)
-    elif role == "doctor":
-        existing_doctor = (
-            db.query(Doctor)
-            .filter(func.lower(Doctor.email) == normalized_email)
-            .first()
-        )
-        if existing_doctor is None:
-            specialty = get_or_create_default_speciality(db)
-            doctor = Doctor(
-                name=name,
-                email=normalized_email,
-                specialty_id=specialty.id,
-                mode="online",
-                fee=0,
-                active=False,
-            )
-            db.add(doctor)
-            doctor_pending_approval = True
-        else:
-            doctor_pending_approval = not bool(existing_doctor.active)
 
     db.commit()
 
-    success_message = "User registered successfully"
-    if role == "doctor":
-        success_message = (
-            "Doctor account created and pending admin approval"
-            if doctor_pending_approval
-            else "Doctor account linked successfully"
-        )
-
-    return {"user_id": user.id, "message": success_message}
+    return {"user_id": user.id, "message": "User registered successfully"}
 
 
 @router.post("/login")

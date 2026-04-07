@@ -4,7 +4,7 @@ export const PLACEHOLDER_IMAGE = `data:image/svg+xml;charset=UTF-8,${encodeURICo
 
 export const APPOINTMENT_STATUSES = ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW']
 export const APPOINTMENT_UPDATE_STATUSES = ['COMPLETED', 'CANCELLED', 'NO_SHOW']
-export const USER_ROLES = ['patient', 'admin', 'doctor']
+export const USER_ROLES = ['patient', 'admin']
 export const APPOINTMENT_MODES = ['online', 'offline']
 export const LEAVE_REASON_OPTIONS = ['Sick Leave', 'Conference', 'Out of Station']
 export const PATIENT_GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say']
