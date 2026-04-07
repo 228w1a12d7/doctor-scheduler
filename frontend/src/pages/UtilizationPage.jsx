@@ -1,12 +1,24 @@
 import { useEffect, useState } from 'react'
+import LoadingSpinner from '../components/LoadingSpinner.jsx'
 import PageHeader from '../components/PageHeader.jsx'
+import { APPOINTMENT_MODES } from '../constants/appConstants.js'
 import { useMockApi } from '../context/MockApiContext.jsx'
 
+const getTodayDateInputValue = () => {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
+
 function UtilizationPage() {
-  const { getClinics, getUtilization } = useMockApi()
-  const [clinics, setClinics] = useState([])
-  const [selectedClinicId, setSelectedClinicId] = useState('')
-  const [utilization, setUtilization] = useState(null)
+  const { getDailySummary, getSpecialties } = useMockApi()
+  const [specialties, setSpecialties] = useState([])
+  const [summary, setSummary] = useState(null)
+  const [filters, setFilters] = useState({
+    date: getTodayDateInputValue(),
+    mode: '',
+    speciality_id: '',
+  })
   const [isLoading, setIsLoading] = useState(true)
   const [isFetching, setIsFetching] = useState(false)
   const [error, setError] = useState('')
@@ -14,18 +26,15 @@ function UtilizationPage() {
   useEffect(() => {
     let mounted = true
 
-    const loadClinics = async () => {
+    const bootstrap = async () => {
       try {
-        const clinicRows = await getClinics()
+        const specialtyRows = await getSpecialties()
 
         if (!mounted) {
           return
         }
 
-        setClinics(clinicRows)
-        if (clinicRows.length) {
-          setSelectedClinicId((prev) => prev || String(clinicRows[0].id))
-        }
+        setSpecialties(specialtyRows)
       } catch (loadError) {
         if (mounted) {
           setError(loadError.message)
@@ -37,28 +46,29 @@ function UtilizationPage() {
       }
     }
 
-    void loadClinics()
+    void bootstrap()
 
     return () => {
       mounted = false
     }
-  }, [getClinics])
+  }, [getSpecialties])
 
   useEffect(() => {
-    if (!selectedClinicId) {
-      return
-    }
-
     let mounted = true
 
-    const loadUtilization = async () => {
+    const loadSummary = async () => {
       setIsFetching(true)
       setError('')
 
       try {
-        const stats = await getUtilization(Number(selectedClinicId))
+        const stats = await getDailySummary({
+          date: filters.date,
+          mode: filters.mode || undefined,
+          speciality_id: filters.speciality_id || undefined,
+        })
+
         if (mounted) {
-          setUtilization(stats)
+          setSummary(stats)
         }
       } catch (fetchError) {
         if (mounted) {
@@ -71,45 +81,92 @@ function UtilizationPage() {
       }
     }
 
-    void loadUtilization()
+    void loadSummary()
 
     return () => {
       mounted = false
     }
-  }, [selectedClinicId, getUtilization])
-
-  const selectedClinic =
-    clinics.find((clinic) => String(clinic.id) === selectedClinicId) ?? null
+  }, [filters, getDailySummary])
 
   return (
     <section>
       <PageHeader
         title="Admin Dashboard"
-        subtitle="Clinic utilization based on total slots and booked slots with API shape: clinic_id, total_slots, booked_slots, utilization_percentage."
+        subtitle="Daily appointment and revenue summary, filterable by date, mode, and speciality."
       />
 
       <section className="rounded-3xl border border-orange-100 bg-white/90 p-6 shadow-lg shadow-orange-100/40">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <label className="block max-w-xs">
-            <span className="mb-1 block text-sm font-semibold text-slate-700">Select Clinic</span>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_auto]">
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold text-slate-700">Date</span>
+            <input
+              type="date"
+              value={filters.date}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  date: event.target.value,
+                }))
+              }
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-orange-500 focus:bg-white"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold text-slate-700">Mode</span>
             <select
-              value={selectedClinicId}
-              onChange={(event) => setSelectedClinicId(event.target.value)}
+              value={filters.mode}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  mode: event.target.value,
+                }))
+              }
               className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-orange-500 focus:bg-white"
             >
-              {clinics.map((clinic) => (
-                <option key={clinic.id} value={clinic.id}>
-                  {clinic.name} ({clinic.location})
+              <option value="">All modes</option>
+              {APPOINTMENT_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode}
                 </option>
               ))}
             </select>
           </label>
 
-          {selectedClinic && (
-            <p className="text-sm font-medium text-slate-600">
-              Tracking: <span className="font-semibold text-slate-900">{selectedClinic.name}</span>
-            </p>
-          )}
+          <label className="block">
+            <span className="mb-1 block text-sm font-semibold text-slate-700">Speciality</span>
+            <select
+              value={filters.speciality_id}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  speciality_id: event.target.value,
+                }))
+              }
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-orange-500 focus:bg-white"
+            >
+              <option value="">All specialties</option>
+              {specialties.map((specialty) => (
+                <option key={specialty.id} value={specialty.id}>
+                  {specialty.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button
+            type="button"
+            onClick={() =>
+              setFilters({
+                date: getTodayDateInputValue(),
+                mode: '',
+                speciality_id: '',
+              })
+            }
+            className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-orange-500 hover:text-orange-700"
+          >
+            Reset
+          </button>
         </div>
 
         {error && (
@@ -118,36 +175,125 @@ function UtilizationPage() {
           </p>
         )}
 
-        {isLoading || isFetching || !utilization ? (
-          <p className="mt-5 text-sm text-slate-500">Loading utilization metrics...</p>
+        {isLoading || isFetching || !summary ? (
+          <LoadingSpinner className="mt-5" label="Loading dashboard summary..." />
         ) : (
           <div className="mt-6 space-y-5">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clinic ID</p>
-                <h3 className="mt-2 text-2xl font-semibold">{utilization.clinic_id}</h3>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total</p>
+                <h3 className="mt-2 text-2xl font-semibold">{summary.total_appointments}</h3>
               </article>
               <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Slots</p>
-                <h3 className="mt-2 text-2xl font-semibold">{utilization.total_slots}</h3>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confirmed</p>
+                <h3 className="mt-2 text-2xl font-semibold">{summary.confirmed_count}</h3>
               </article>
               <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Booked Slots</p>
-                <h3 className="mt-2 text-2xl font-semibold">{utilization.booked_slots}</h3>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Completed</p>
+                <h3 className="mt-2 text-2xl font-semibold">{summary.completed_count}</h3>
+              </article>
+              <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cancelled</p>
+                <h3 className="mt-2 text-2xl font-semibold">{summary.cancelled_count}</h3>
+              </article>
+              <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">No Show</p>
+                <h3 className="mt-2 text-2xl font-semibold">{summary.no_show_count}</h3>
+              </article>
+              <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Revenue</p>
+                <h3 className="mt-2 text-2xl font-semibold">{summary.revenue}</h3>
               </article>
             </div>
 
             <div>
               <div className="mb-2 flex items-center justify-between text-sm font-semibold text-slate-700">
-                <span>Utilization</span>
-                <span>{utilization.utilization_percentage}%</span>
+                <span>Completion Rate</span>
+                <span>
+                  {summary.total_appointments > 0
+                    ? ((summary.completed_count / summary.total_appointments) * 100).toFixed(1)
+                    : '0.0'}
+                  %
+                </span>
               </div>
               <div className="h-4 w-full overflow-hidden rounded-full bg-slate-200">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-orange-500 via-teal-600 to-emerald-500 transition-all"
-                  style={{ width: `${utilization.utilization_percentage}%` }}
+                  style={{
+                    width: `${
+                      summary.total_appointments > 0
+                        ? (summary.completed_count / summary.total_appointments) * 100
+                        : 0
+                    }%`,
+                  }}
                 ></div>
               </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-2">
+              <article className="rounded-2xl border border-slate-200 bg-white p-4">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">By Mode</h3>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full min-w-[320px] text-left text-sm">
+                    <thead>
+                      <tr className="text-slate-500">
+                        <th className="py-2">Mode</th>
+                        <th className="py-2">Appointments</th>
+                        <th className="py-2">Revenue</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.by_mode.length === 0 ? (
+                        <tr>
+                          <td className="py-2 text-slate-500" colSpan={3}>
+                            No records
+                          </td>
+                        </tr>
+                      ) : (
+                        summary.by_mode.map((row) => (
+                          <tr key={row.mode} className="border-t border-slate-100">
+                            <td className="py-2 font-semibold text-slate-800">{row.mode}</td>
+                            <td className="py-2 text-slate-700">{row.appointment_count}</td>
+                            <td className="py-2 text-slate-700">{row.revenue}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-slate-200 bg-white p-4">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">By Speciality</h3>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full min-w-[340px] text-left text-sm">
+                    <thead>
+                      <tr className="text-slate-500">
+                        <th className="py-2">Speciality</th>
+                        <th className="py-2">Appointments</th>
+                        <th className="py-2">Revenue</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.by_speciality.length === 0 ? (
+                        <tr>
+                          <td className="py-2 text-slate-500" colSpan={3}>
+                            No records
+                          </td>
+                        </tr>
+                      ) : (
+                        summary.by_speciality.map((row) => (
+                          <tr key={row.speciality} className="border-t border-slate-100">
+                            <td className="py-2 font-semibold text-slate-800">{row.speciality}</td>
+                            <td className="py-2 text-slate-700">{row.appointment_count}</td>
+                            <td className="py-2 text-slate-700">{row.revenue}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
             </div>
           </div>
         )}

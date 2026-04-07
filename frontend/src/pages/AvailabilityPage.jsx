@@ -1,105 +1,93 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import LoadingSpinner from '../components/LoadingSpinner.jsx'
 import PageHeader from '../components/PageHeader.jsx'
-import { WEEK_DAYS } from '../constants/appConstants.js'
+import { APPOINTMENT_MODES } from '../constants/appConstants.js'
 import { useMockApi } from '../context/MockApiContext.jsx'
 
+const todayDate = () => {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
+
 function AvailabilityPage() {
-  const { addAvailability, getAvailability, getClinics, getDoctors } = useMockApi()
+  const { addDoctorSchedule, getDoctorSchedules, getDoctors } = useMockApi()
+
   const [doctors, setDoctors] = useState([])
-  const [clinics, setClinics] = useState([])
-  const [availabilityRows, setAvailabilityRows] = useState([])
+  const [scheduleRows, setScheduleRows] = useState([])
   const [filters, setFilters] = useState({
     doctor_id: '',
-    speciality: '',
-    clinic: '',
-    day: '',
+    mode: '',
+    date: '',
+    include_booked: false,
   })
   const [form, setForm] = useState({
     doctor_id: '',
-    clinic_id: '',
-    day: 'Monday',
+    date: todayDate(),
     start_time: '09:00',
     end_time: '14:00',
   })
+
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
-
-  const loadAvailabilityRows = useCallback(
-    async (doctorList) => {
-      const nestedRows = await Promise.all(
-        doctorList.map(async (doctor) => {
-          const rows = await getAvailability(doctor.id)
-
-          return rows.map((row, index) => ({
-            ...row,
-            doctor_id: doctor.id,
-            doctor_name: doctor.name,
-            speciality: doctor.speciality,
-            key: `${doctor.id}-${row.clinic}-${row.day}-${row.start_time}-${row.end_time}-${index}`,
-          }))
-        }),
-      )
-
-      return nestedRows.flat()
-    },
-    [getAvailability],
-  )
+  const [feedback, setFeedback] = useState('')
 
   useEffect(() => {
     let mounted = true
 
-    const loadData = async () => {
+    const loadData = async (isInitial = false) => {
       try {
-        const [doctorList, clinicList] = await Promise.all([
-          getDoctors(),
-          getClinics(),
-        ])
-        const availabilityList = await loadAvailabilityRows(doctorList)
+        const [doctorRows, schedules] = await Promise.all([getDoctors(), getDoctorSchedules()])
 
         if (!mounted) {
           return
         }
 
-        setDoctors(doctorList)
-        setClinics(clinicList)
-        setAvailabilityRows(availabilityList)
+        setDoctors(doctorRows)
+        setScheduleRows(schedules)
       } catch (loadError) {
         if (mounted) {
           setError(loadError.message)
         }
       } finally {
-        if (mounted) {
+        if (mounted && isInitial) {
           setIsLoading(false)
         }
       }
     }
 
-    void loadData()
+    void loadData(true)
+    const intervalId = window.setInterval(() => {
+      void loadData(false)
+    }, 15000)
 
     return () => {
       mounted = false
+      window.clearInterval(intervalId)
     }
-  }, [getDoctors, getClinics, loadAvailabilityRows])
+  }, [getDoctors, getDoctorSchedules])
 
-  const filteredAvailabilityRows = useMemo(
+  const reloadSchedules = async () => {
+    const rows = await getDoctorSchedules()
+    setScheduleRows(rows)
+  }
+
+  const filteredRows = useMemo(
     () =>
-      availabilityRows.filter((row) => {
+      scheduleRows.filter((row) => {
         const doctorMatches =
           !filters.doctor_id || String(row.doctor_id) === String(filters.doctor_id)
-        const specialityMatches =
-          !filters.speciality ||
-          row.speciality.toLowerCase().includes(filters.speciality.trim().toLowerCase())
-        const clinicMatches = !filters.clinic || row.clinic === filters.clinic
-        const dayMatches = !filters.day || row.day === filters.day
+        const modeMatches = !filters.mode || row.mode === filters.mode
+        const dateMatches = !filters.date || String(row.date) === filters.date
+        const bookedMatches = filters.include_booked || row.booked === false
 
-        return doctorMatches && specialityMatches && clinicMatches && dayMatches
+        return doctorMatches && modeMatches && dateMatches && bookedMatches
       }),
-    [availabilityRows, filters],
+    [scheduleRows, filters],
   )
 
-  const handleFieldChange = (event) => {
+  const handleFormChange = (event) => {
     const { name, value } = event.target
     setForm((prev) => ({
       ...prev,
@@ -114,19 +102,15 @@ function AvailabilityPage() {
     setIsSubmitting(true)
 
     try {
-      await addAvailability({
+      const response = await addDoctorSchedule({
         doctor_id: Number(form.doctor_id),
-        clinic_id: Number(form.clinic_id),
-        day: form.day,
+        date: form.date,
         start_time: form.start_time,
         end_time: form.end_time,
       })
 
-      const refreshedDoctors = await getDoctors()
-      const refreshed = await loadAvailabilityRows(refreshedDoctors)
-      setDoctors(refreshedDoctors)
-      setAvailabilityRows(refreshed)
-      setFeedback('Availability added')
+      await reloadSchedules()
+      setFeedback(`${response.message}: ${response.created_slots} slot(s) created`)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
@@ -137,8 +121,8 @@ function AvailabilityPage() {
   return (
     <section>
       <PageHeader
-        title="Availability Management"
-        subtitle="Add day/time windows for mapped doctor-clinic pairs and review availability with doctor and speciality context."
+        title="Doctor Schedule Management"
+        subtitle="Admin creates date-based 15-minute slot schedules for each doctor."
       />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
@@ -146,7 +130,7 @@ function AvailabilityPage() {
           onSubmit={handleSubmit}
           className="rounded-3xl border border-teal-100 bg-white/85 p-6 shadow-lg shadow-teal-100/40"
         >
-          <h3 className="text-xl font-semibold">Add Availability</h3>
+          <h3 className="text-xl font-semibold">Add Schedule</h3>
 
           <div className="mt-4 space-y-4">
             <label className="block">
@@ -155,51 +139,29 @@ function AvailabilityPage() {
                 required
                 name="doctor_id"
                 value={form.doctor_id}
-                onChange={handleFieldChange}
+                onChange={handleFormChange}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
               >
                 <option value="">Select doctor</option>
                 {doctors.map((doctor) => (
                   <option key={doctor.id} value={doctor.id}>
-                    {doctor.name}
+                    {doctor.name} ({doctor.speciality} - {doctor.mode})
                   </option>
                 ))}
               </select>
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-sm font-semibold text-slate-700">Clinic</span>
-              <select
+              <span className="mb-1 block text-sm font-semibold text-slate-700">Date</span>
+              <input
                 required
-                name="clinic_id"
-                value={form.clinic_id}
-                onChange={handleFieldChange}
+                type="date"
+                name="date"
+                min={todayDate()}
+                value={form.date}
+                onChange={handleFormChange}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
-              >
-                <option value="">Select clinic</option>
-                {clinics.map((clinic) => (
-                  <option key={clinic.id} value={clinic.id}>
-                    {clinic.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-sm font-semibold text-slate-700">Day</span>
-              <select
-                required
-                name="day"
-                value={form.day}
-                onChange={handleFieldChange}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
-              >
-                {WEEK_DAYS.map((day) => (
-                  <option key={day} value={day}>
-                    {day}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -210,7 +172,7 @@ function AvailabilityPage() {
                   type="time"
                   name="start_time"
                   value={form.start_time}
-                  onChange={handleFieldChange}
+                  onChange={handleFormChange}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
                 />
               </label>
@@ -222,11 +184,15 @@ function AvailabilityPage() {
                   type="time"
                   name="end_time"
                   value={form.end_time}
-                  onChange={handleFieldChange}
+                  onChange={handleFormChange}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
                 />
               </label>
             </div>
+
+            <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">
+              New slots are created as available by default.
+            </p>
 
             {error && (
               <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
@@ -245,18 +211,16 @@ function AvailabilityPage() {
               disabled={isSubmitting}
               className="w-full rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {isSubmitting ? 'Saving...' : 'Add Availability'}
+              {isSubmitting ? 'Saving...' : 'Create Slots'}
             </button>
           </div>
         </form>
 
         <section className="rounded-3xl border border-slate-200 bg-white/85 p-6 shadow-lg shadow-slate-100/70">
-          <h3 className="text-xl font-semibold">Availability List</h3>
-          <p className="mt-1 text-sm text-slate-600">
-            Response shape from API: [ clinic, day, start_time, end_time ] plus derived doctor profile fields.
-          </p>
+          <h3 className="text-xl font-semibold">Doctor Schedules</h3>
+          <p className="mt-1 text-[11px] uppercase tracking-wide text-slate-500">Auto-refresh every 15 seconds</p>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_auto]">
             <select
               value={filters.doctor_id}
               onChange={(event) =>
@@ -275,101 +239,94 @@ function AvailabilityPage() {
               ))}
             </select>
 
-            <input
-              value={filters.speciality}
+            <select
+              value={filters.mode}
               onChange={(event) =>
                 setFilters((prev) => ({
                   ...prev,
-                  speciality: event.target.value,
+                  mode: event.target.value,
                 }))
               }
-              placeholder="Filter by speciality"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-teal-500"
+            >
+              <option value="">Filter by mode</option>
+              {APPOINTMENT_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="date"
+              value={filters.date}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  date: event.target.value,
+                }))
+              }
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-teal-500"
             />
 
-            <select
-              value={filters.clinic}
-              onChange={(event) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  clinic: event.target.value,
-                }))
-              }
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-teal-500"
-            >
-              <option value="">Filter by clinic</option>
-              {[...new Set(availabilityRows.map((row) => row.clinic))].map((clinicName) => (
-                <option key={clinicName} value={clinicName}>
-                  {clinicName}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={filters.day}
-              onChange={(event) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  day: event.target.value,
-                }))
-              }
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-teal-500"
-            >
-              <option value="">Filter by day</option>
-              {WEEK_DAYS.map((day) => (
-                <option key={day} value={day}>
-                  {day}
-                </option>
-              ))}
-            </select>
-
-            <button
-              type="button"
-              onClick={() =>
-                setFilters({
-                  doctor_id: '',
-                  speciality: '',
-                  clinic: '',
-                  day: '',
-                })
-              }
-              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-teal-500 hover:text-teal-700"
-            >
-              Clear
-            </button>
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={filters.include_booked}
+                onChange={(event) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    include_booked: event.target.checked,
+                  }))
+                }
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              <span>Include booked</span>
+            </label>
           </div>
 
           {isLoading ? (
-            <p className="mt-4 text-sm text-slate-500">Loading availability...</p>
+            <LoadingSpinner className="mt-4" label="Loading schedules..." />
           ) : (
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[760px] border-separate border-spacing-y-2 text-left text-sm">
+              <table className="w-full min-w-[780px] border-separate border-spacing-y-2 text-left text-sm">
                 <thead>
                   <tr className="text-slate-500">
                     <th className="px-3 py-2">Doctor</th>
                     <th className="px-3 py-2">Speciality</th>
-                    <th className="px-3 py-2">Clinic</th>
-                    <th className="px-3 py-2">Day</th>
-                    <th className="px-3 py-2">Start</th>
-                    <th className="px-3 py-2">End</th>
+                    <th className="px-3 py-2">Mode</th>
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Slot</th>
+                    <th className="px-3 py-2">Booked</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAvailabilityRows.length === 0 ? (
+                  {filteredRows.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-3 py-4 text-sm text-slate-500">
-                        No availability rows match current filters.
+                        No schedule rows match current filters.
                       </td>
                     </tr>
                   ) : (
-                    filteredAvailabilityRows.map((row) => (
-                      <tr key={row.key} className="bg-slate-50">
+                    filteredRows.map((row) => (
+                      <tr key={row.id} className="bg-slate-50">
                         <td className="px-3 py-3 font-semibold text-slate-800">{row.doctor_name}</td>
                         <td className="px-3 py-3 text-slate-700">{row.speciality}</td>
-                        <td className="px-3 py-3 font-semibold text-slate-800">{row.clinic}</td>
-                        <td className="px-3 py-3 text-slate-700">{row.day}</td>
-                        <td className="px-3 py-3 text-slate-700">{row.start_time}</td>
-                        <td className="px-3 py-3 text-slate-700">{row.end_time}</td>
+                        <td className="px-3 py-3 text-slate-700">{row.mode}</td>
+                        <td className="px-3 py-3 text-slate-700">{row.date}</td>
+                        <td className="px-3 py-3 text-slate-700">{row.time_slot}</td>
+                        <td className="px-3 py-3">
+                          <span
+                            className={[
+                              'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold',
+                              row.booked
+                                ? 'bg-rose-100 text-rose-700'
+                                : 'bg-emerald-100 text-emerald-700',
+                            ].join(' ')}
+                          >
+                            {row.booked ? 'Booked' : 'Available'}
+                          </span>
+                        </td>
                       </tr>
                     ))
                   )}
