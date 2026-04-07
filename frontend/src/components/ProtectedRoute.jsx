@@ -5,7 +5,7 @@ function ProtectedRoute({ children }) {
   const { auth } = useMockApi()
 
   if (!auth?.token) {
-    return <Navigate to="/signin" replace />
+    return <Navigate to="/" replace />
   }
 
   return children

@@ -249,14 +249,6 @@ export function MockApiProvider({ children }) {
       formData.append('fee', String(payload.fee))
       formData.append('active', String(Boolean(payload.active)))
 
-      if (payload.location_latitude !== '' && payload.location_latitude !== null && payload.location_latitude !== undefined) {
-        formData.append('location_latitude', String(payload.location_latitude))
-      }
-
-      if (payload.location_longitude !== '' && payload.location_longitude !== null && payload.location_longitude !== undefined) {
-        formData.append('location_longitude', String(payload.location_longitude))
-      }
-
       if (payload.mode === 'online' && payload.meeting_link) {
         formData.append('meeting_link', payload.meeting_link)
       }
@@ -288,14 +280,6 @@ export function MockApiProvider({ children }) {
       formData.append('mode', payload.mode)
       formData.append('fee', String(payload.fee))
       formData.append('active', String(Boolean(payload.active)))
-
-      if (payload.location_latitude !== '' && payload.location_latitude !== null && payload.location_latitude !== undefined) {
-        formData.append('location_latitude', String(payload.location_latitude))
-      }
-
-      if (payload.location_longitude !== '' && payload.location_longitude !== null && payload.location_longitude !== undefined) {
-        formData.append('location_longitude', String(payload.location_longitude))
-      }
 
       if (payload.mode === 'online' && payload.meeting_link) {
         formData.append('meeting_link', payload.meeting_link)

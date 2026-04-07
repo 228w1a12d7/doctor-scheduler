@@ -162,16 +162,6 @@ function SearchPage() {
             {doctor.mode === 'offline' && doctor.clinic_address && (
               <p>Clinic: {doctor.clinic_address}</p>
             )}
-            {doctor.location_map_url && (
-              <a
-                href={doctor.location_map_url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex font-semibold text-teal-700 hover:text-teal-900"
-              >
-                View live location
-              </a>
-            )}
           </div>
 
           <button

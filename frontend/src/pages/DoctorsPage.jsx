@@ -13,8 +13,6 @@ const emptyForm = {
   active: true,
   meeting_link: '',
   clinic_address: '',
-  location_latitude: '',
-  location_longitude: '',
   imageFile: null,
   imagePreview: '',
 }
@@ -138,10 +136,6 @@ function DoctorsPage() {
         active: form.active,
         meeting_link: form.mode === 'online' ? form.meeting_link.trim() : '',
         clinic_address: form.mode === 'offline' ? form.clinic_address.trim() : '',
-        location_latitude:
-          form.location_latitude === '' ? '' : Number(form.location_latitude),
-        location_longitude:
-          form.location_longitude === '' ? '' : Number(form.location_longitude),
         imageFile: form.imageFile,
       }
 
@@ -168,14 +162,6 @@ function DoctorsPage() {
       active: doctor.active,
       meeting_link: doctor.meeting_link || '',
       clinic_address: doctor.clinic_address || '',
-      location_latitude:
-        doctor.location_latitude === null || doctor.location_latitude === undefined
-          ? ''
-          : String(doctor.location_latitude),
-      location_longitude:
-        doctor.location_longitude === null || doctor.location_longitude === undefined
-          ? ''
-          : String(doctor.location_longitude),
       imageFile: null,
       imagePreview: doctor.image || '',
     })
@@ -220,10 +206,6 @@ function DoctorsPage() {
         active: editForm.active,
         meeting_link: editForm.mode === 'online' ? editForm.meeting_link.trim() : '',
         clinic_address: editForm.mode === 'offline' ? editForm.clinic_address.trim() : '',
-        location_latitude:
-          editForm.location_latitude === '' ? '' : Number(editForm.location_latitude),
-        location_longitude:
-          editForm.location_longitude === '' ? '' : Number(editForm.location_longitude),
         imageFile: editForm.imageFile,
       })
 
@@ -383,38 +365,6 @@ function DoctorsPage() {
               </label>
             )}
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">Location Latitude</span>
-                <input
-                  type="number"
-                  step="0.000001"
-                  min="-90"
-                  max="90"
-                  name="location_latitude"
-                  value={form.location_latitude}
-                  onChange={handleFieldChange}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
-                  placeholder="17.3850"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">Location Longitude</span>
-                <input
-                  type="number"
-                  step="0.000001"
-                  min="-180"
-                  max="180"
-                  name="location_longitude"
-                  value={form.location_longitude}
-                  onChange={handleFieldChange}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none transition focus:border-teal-500 focus:bg-white"
-                  placeholder="78.4867"
-                />
-              </label>
-            </div>
-
             <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
               <input
                 type="checkbox"
@@ -563,31 +513,6 @@ function DoctorsPage() {
                         />
                       )}
 
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <input
-                          type="number"
-                          step="0.000001"
-                          min="-90"
-                          max="90"
-                          name="location_latitude"
-                          value={editForm.location_latitude}
-                          onChange={handleEditFieldChange}
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
-                          placeholder="Latitude"
-                        />
-                        <input
-                          type="number"
-                          step="0.000001"
-                          min="-180"
-                          max="180"
-                          name="location_longitude"
-                          value={editForm.location_longitude}
-                          onChange={handleEditFieldChange}
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-teal-500 focus:bg-white"
-                          placeholder="Longitude"
-                        />
-                      </div>
-
                       <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                         <input
                           type="checkbox"
@@ -651,17 +576,6 @@ function DoctorsPage() {
 
                       {doctor.mode === 'offline' && doctor.clinic_address && (
                         <p className="mt-2 text-xs text-slate-600">Address: {doctor.clinic_address}</p>
-                      )}
-
-                      {doctor.location_map_url && (
-                        <a
-                          href={doctor.location_map_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-flex text-xs font-semibold text-teal-700 hover:text-teal-900"
-                        >
-                          View location on map
-                        </a>
                       )}
 
                       {doctor.mode === 'online' && doctor.meeting_link && (

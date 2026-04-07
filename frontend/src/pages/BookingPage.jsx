@@ -409,17 +409,6 @@ function BookingPage() {
                 </p>
               )}
 
-              {selectedDoctor?.location_map_url && (
-                <a
-                  href={selectedDoctor.location_map_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex text-xs font-semibold text-teal-700 hover:text-teal-900"
-                >
-                  Open doctor location on map
-                </a>
-              )}
-
               <label className="block">
                 <span className="mb-1 block text-sm font-semibold text-slate-700">Date</span>
                 <input
