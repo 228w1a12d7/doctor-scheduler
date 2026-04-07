@@ -1,36 +1,23 @@
-from datetime import date, datetime
+from datetime import date as date_type, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import get_db
-from models import Appointment, Availability, Clinic, Doctor, DoctorClinic, Leave
+from models import Doctor, DoctorLeave, DoctorSchedule, Specialty
 from schemas import (
     AvailabilityByDateOut,
-    AvailabilityCreateRequest,
-    AvailabilityOut,
+    DoctorScheduleCreateRequest,
+    DoctorScheduleCreateResponse,
+    DoctorScheduleOut,
     LeaveCreateRequest,
     LeaveOut,
 )
-from utils import (
-    generate_15_min_slots,
-    get_weekday_name,
-    parse_time_or_400,
-    time_to_minutes,
-    validate_time_range,
-)
+from utils import generate_15_min_slots, parse_time_or_400, time_to_minutes, validate_time_range
 
-router = APIRouter(tags=["availability"])
-VALID_DAYS = {
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-}
+router = APIRouter(tags=["schedules"])
+VALID_MODES = {"online", "offline"}
 LEAVE_REASON_TAXONOMY = {
     "sick leave": "Sick Leave",
     "sick": "Sick Leave",
@@ -40,112 +27,33 @@ LEAVE_REASON_TAXONOMY = {
 }
 
 
-@router.post("/availability")
-def create_availability(
-    payload: AvailabilityCreateRequest,
-    db: Session = Depends(get_db),
-    _user=Depends(get_current_user),
-):
-    doctor = db.get(Doctor, payload.doctor_id)
-    if doctor is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
-
-    clinic = db.get(Clinic, payload.clinic_id)
-    if clinic is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clinic not found")
-
-    mapping = (
-        db.query(DoctorClinic)
-        .filter(
-            DoctorClinic.doctor_id == payload.doctor_id,
-            DoctorClinic.clinic_id == payload.clinic_id,
+def ensure_admin(user):
+    if str(user.role).lower() != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin can perform this action",
         )
-        .first()
-    )
-    if mapping is None:
+
+
+def normalize_leave_reason(reason_value: str) -> str:
+    normalized = " ".join(reason_value.strip().lower().replace("-", " ").split())
+    mapped = LEAVE_REASON_TAXONOMY.get(normalized)
+    if mapped is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Doctor must be mapped to clinic first",
+            detail="reason must be Sick Leave, Conference, or Out of Station",
         )
-
-    day = payload.day.strip().capitalize()
-    if day not in VALID_DAYS:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid day")
-
-    start, end = validate_time_range(payload.start_time, payload.end_time)
-    start_minutes = time_to_minutes(start)
-    end_minutes = time_to_minutes(end)
-
-    existing = (
-        db.query(Availability)
-        .filter(
-            Availability.doctor_id == payload.doctor_id,
-            Availability.clinic_id == payload.clinic_id,
-            Availability.day == day,
-        )
-        .all()
-    )
-
-    for row in existing:
-        existing_start = time_to_minutes(parse_time_or_400(row.start_time))
-        existing_end = time_to_minutes(parse_time_or_400(row.end_time))
-        has_overlap = start_minutes < existing_end and existing_start < end_minutes
-        if has_overlap:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Availability overlaps with existing schedule",
-            )
-
-    availability = Availability(
-        doctor_id=payload.doctor_id,
-        clinic_id=payload.clinic_id,
-        day=day,
-        start_time=payload.start_time,
-        end_time=payload.end_time,
-    )
-    db.add(availability)
-    db.commit()
-
-    return {"message": "Availability added"}
-
-
-@router.get("/availability", response_model=list[AvailabilityOut])
-def list_availability(
-    doctor_id: int = Query(...),
-    db: Session = Depends(get_db),
-    _user=Depends(get_current_user),
-):
-    doctor = db.get(Doctor, doctor_id)
-    if doctor is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
-
-    rows = (
-        db.query(Availability, Clinic)
-        .join(Clinic, Clinic.id == Availability.clinic_id)
-        .filter(Availability.doctor_id == doctor_id)
-        .order_by(Availability.day.asc(), Availability.start_time.asc())
-        .all()
-    )
-
-    result = []
-    for availability, clinic in rows:
-        result.append(
-            {
-                "clinic": clinic.name,
-                "day": availability.day,
-                "start_time": availability.start_time,
-                "end_time": availability.end_time,
-            }
-        )
-    return result
+    return mapped
 
 
 @router.post("/leaves")
 def create_leave(
     payload: LeaveCreateRequest,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
+    ensure_admin(user)
+
     doctor = db.get(Doctor, payload.doctor_id)
     if doctor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
@@ -156,38 +64,31 @@ def create_leave(
             detail="start_date cannot be after end_date",
         )
 
-    normalized_reason_key = payload.reason.strip().lower()
-    normalized_reason = LEAVE_REASON_TAXONOMY.get(normalized_reason_key)
-    if normalized_reason is None:
+    normalized_reason = normalize_leave_reason(payload.reason)
+    calculated_days = (payload.end_date - payload.start_date).days + 1
+
+    if payload.number_of_leaves is not None and payload.number_of_leaves != calculated_days:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Reason must be one of: Sick Leave, Conference, Out of Station",
+            detail="number_of_leaves must match start_date and end_date",
         )
 
-    number_of_leaves = (payload.end_date - payload.start_date).days + 1
-    if payload.number_of_leaves is not None and payload.number_of_leaves != number_of_leaves:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="number_of_leaves must match start_date and end_date range",
-        )
-
-    has_appointment_conflict = (
-        db.query(Appointment)
+    overlap = (
+        db.query(DoctorLeave)
         .filter(
-            Appointment.doctor_id == payload.doctor_id,
-            Appointment.date >= payload.start_date,
-            Appointment.date <= payload.end_date,
-            Appointment.status == "BOOKED",
+            DoctorLeave.doctor_id == payload.doctor_id,
+            DoctorLeave.start_date <= payload.end_date,
+            DoctorLeave.end_date >= payload.start_date,
         )
         .first()
     )
-    if has_appointment_conflict:
+    if overlap is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Booked appointments conflict with requested leave dates",
+            detail="Leave overlaps with an existing leave range",
         )
 
-    leave = Leave(
+    leave = DoctorLeave(
         doctor_id=payload.doctor_id,
         start_date=payload.start_date,
         end_date=payload.end_date,
@@ -200,7 +101,7 @@ def create_leave(
     return {
         "message": "Leave recorded",
         "leave_id": leave.id,
-        "number_of_leaves": number_of_leaves,
+        "number_of_leaves": calculated_days,
     }
 
 
@@ -210,12 +111,12 @@ def list_leaves(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user),
 ):
-    query = db.query(Leave, Doctor).join(Doctor, Doctor.id == Leave.doctor_id)
+    query = db.query(DoctorLeave, Doctor).join(Doctor, Doctor.id == DoctorLeave.doctor_id)
 
     if doctor_id is not None:
-        query = query.filter(Leave.doctor_id == doctor_id)
+        query = query.filter(DoctorLeave.doctor_id == doctor_id)
 
-    rows = query.order_by(Leave.start_date.desc(), Leave.id.desc()).all()
+    rows = query.order_by(DoctorLeave.start_date.desc(), DoctorLeave.id.desc()).all()
 
     return [
         {
@@ -231,88 +132,217 @@ def list_leaves(
     ]
 
 
+@router.post("/doctor-schedules", response_model=DoctorScheduleCreateResponse)
+def create_doctor_schedule(
+    payload: DoctorScheduleCreateRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    ensure_admin(user)
+
+    doctor = db.get(Doctor, payload.doctor_id)
+    if doctor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
+
+    start, end = validate_time_range(payload.start_time, payload.end_time)
+    if payload.date < date_type.today():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Schedule date cannot be in the past",
+        )
+
+    leave_conflict = (
+        db.query(DoctorLeave)
+        .filter(
+            DoctorLeave.doctor_id == payload.doctor_id,
+            DoctorLeave.start_date <= payload.date,
+            DoctorLeave.end_date >= payload.date,
+        )
+        .first()
+    )
+    if leave_conflict is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Doctor is on leave ({leave_conflict.reason}) for selected date",
+        )
+
+    generated_slots = generate_15_min_slots(start.strftime("%H:%M"), end.strftime("%H:%M"))
+
+    existing_rows = (
+        db.query(DoctorSchedule)
+        .filter(
+            DoctorSchedule.doctor_id == payload.doctor_id,
+            DoctorSchedule.schedule_date == payload.date,
+            DoctorSchedule.time_slot.in_(generated_slots),
+        )
+        .all()
+    )
+    existing_slots = {row.time_slot for row in existing_rows}
+    if existing_slots:
+        taken = ", ".join(sorted(existing_slots))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Schedule already exists for slots: {taken}",
+        )
+
+    for slot in generated_slots:
+        db.add(
+            DoctorSchedule(
+                doctor_id=payload.doctor_id,
+                schedule_date=payload.date,
+                time_slot=slot,
+                booked=False,
+            )
+        )
+
+    db.commit()
+
+    return {
+        "message": "Doctor schedule created",
+        "doctor_id": payload.doctor_id,
+        "date": payload.date,
+        "created_slots": len(generated_slots),
+        "slots": generated_slots,
+    }
+
+
+@router.get("/doctor-schedules", response_model=list[DoctorScheduleOut])
+def list_doctor_schedules(
+    doctor_id: int | None = Query(default=None),
+    date: date_type | None = Query(default=None),
+    mode: str | None = Query(default=None),
+    include_booked: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    query = (
+        db.query(DoctorSchedule, Doctor, Specialty)
+        .join(Doctor, Doctor.id == DoctorSchedule.doctor_id)
+        .join(Specialty, Specialty.id == Doctor.specialty_id)
+    )
+
+    if doctor_id is not None:
+        query = query.filter(DoctorSchedule.doctor_id == doctor_id)
+
+    if date is not None:
+        query = query.filter(DoctorSchedule.schedule_date == date)
+
+    if mode:
+        normalized_mode = mode.strip().lower()
+        if normalized_mode not in VALID_MODES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="mode must be online or offline",
+            )
+        query = query.filter(Doctor.mode == normalized_mode)
+
+    if str(user.role).lower() == "patient":
+        query = query.filter(Doctor.active.is_(True))
+
+    if not include_booked:
+        query = query.filter(DoctorSchedule.booked.is_(False))
+
+    rows = (
+        query.order_by(
+            DoctorSchedule.schedule_date.asc(),
+            Doctor.name.asc(),
+            DoctorSchedule.time_slot.asc(),
+        )
+        .all()
+    )
+
+    return [
+        {
+            "id": schedule.id,
+            "doctor_id": doctor.id,
+            "doctor_name": doctor.name,
+            "speciality": specialty.name,
+            "mode": doctor.mode,
+            "date": schedule.schedule_date,
+            "time_slot": schedule.time_slot,
+            "booked": bool(schedule.booked),
+        }
+        for schedule, doctor, specialty in rows
+    ]
+
+
 @router.get("/availability-by-date", response_model=AvailabilityByDateOut)
 def get_availability_by_date(
     doctor_id: int = Query(...),
-    clinic_id: int | None = Query(default=None),
-    target_date: date = Query(..., alias="date"),
+    target_date: date_type = Query(..., alias="date"),
+    mode: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
     doctor = db.get(Doctor, doctor_id)
     if doctor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
 
-    if target_date < datetime.now().date():
-        return {
-            "doctor_id": doctor_id,
-            "available_slots": [],
-            "is_on_leave": False,
-            "leave_reason": None,
-        }
+    if str(user.role).lower() == "patient" and not doctor.active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
 
-    if clinic_id is not None:
-        clinic = db.get(Clinic, clinic_id)
-        if clinic is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clinic not found")
+    if mode:
+        normalized_mode = mode.strip().lower()
+        if normalized_mode not in VALID_MODES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="mode must be online or offline",
+            )
+        if normalized_mode != doctor.mode:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Doctor mode mismatch for requested appointment mode",
+            )
 
-    leave_exists = (
-        db.query(Leave)
+    leave_conflict = (
+        db.query(DoctorLeave)
         .filter(
-            Leave.doctor_id == doctor_id,
-            Leave.start_date <= target_date,
-            Leave.end_date >= target_date,
+            DoctorLeave.doctor_id == doctor_id,
+            DoctorLeave.start_date <= target_date,
+            DoctorLeave.end_date >= target_date,
         )
         .first()
     )
-    if leave_exists:
+    if leave_conflict is not None:
         return {
             "doctor_id": doctor_id,
+            "date": target_date,
+            "mode": doctor.mode,
             "available_slots": [],
             "is_on_leave": True,
-            "leave_reason": leave_exists.reason,
+            "leave_reason": leave_conflict.reason,
         }
 
-    weekday = get_weekday_name(target_date)
-    availability_query = db.query(Availability).filter(
-        Availability.doctor_id == doctor_id,
-        Availability.day == weekday,
-    )
-
-    if clinic_id is not None:
-        availability_query = availability_query.filter(Availability.clinic_id == clinic_id)
-
-    availability_rows = availability_query.all()
-
-    slot_set: set[str] = set()
-    for row in availability_rows:
-        for slot in generate_15_min_slots(row.start_time, row.end_time):
-            slot_set.add(slot)
-
-    booked_rows = (
-        db.query(Appointment)
+    schedule_rows = (
+        db.query(DoctorSchedule)
         .filter(
-            Appointment.doctor_id == doctor_id,
-            Appointment.date == target_date,
-            Appointment.status == "BOOKED",
+            DoctorSchedule.doctor_id == doctor_id,
+            DoctorSchedule.schedule_date == target_date,
+            DoctorSchedule.booked.is_(False),
         )
+        .order_by(DoctorSchedule.time_slot.asc())
         .all()
     )
-    booked_slots = {row.time for row in booked_rows}
 
-    available_slots = sorted(slot_set.difference(booked_slots))
-
-    if target_date == datetime.now().date():
+    if target_date == date_type.today():
         now_minutes = time_to_minutes(datetime.now().time())
-        available_slots = [
-            slot
-            for slot in available_slots
-            if time_to_minutes(parse_time_or_400(slot)) > now_minutes
+        schedule_rows = [
+            row
+            for row in schedule_rows
+            if time_to_minutes(parse_time_or_400(row.time_slot)) > now_minutes
         ]
 
     return {
         "doctor_id": doctor_id,
-        "available_slots": available_slots,
+        "date": target_date,
+        "mode": doctor.mode,
+        "available_slots": [
+            {
+                "schedule_id": row.id,
+                "time_slot": row.time_slot,
+            }
+            for row in schedule_rows
+        ],
         "is_on_leave": False,
         "leave_reason": None,
     }

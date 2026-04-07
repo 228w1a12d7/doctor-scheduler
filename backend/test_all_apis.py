@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""
-Comprehensive API Test Suite for Doctor Scheduler Backend
-Tests all 16 endpoints with proper request formats
-"""
+"""Comprehensive API tests for Doctor Scheduler v2."""
+
+import json
+import sys
+from datetime import date, datetime, timedelta
 
 import requests
-import json
-from datetime import datetime, timedelta
-import sys
 
 BASE_URL = "http://127.0.0.1:8001"
 TIMEOUT = 10
+
 
 class APITester:
     def __init__(self):
@@ -18,279 +17,417 @@ class APITester:
         self.admin_token = None
         self.patient_id = None
         self.doctor_id = None
-        self.clinic_id = None
+        self.mode = "online"
+        self.speciality = "Cardiology"
+        self.schedule_date = (date.today() + timedelta(days=1)).isoformat()
+        self.available_schedule_id = None
         self.appointment_id = None
-        self.future_booking_date = None
         self.passed = 0
         self.failed = 0
-        self.results = []
 
     def log(self, message):
         print(message)
-        self.results.append(message)
 
-    def test_endpoint(self, test_num, name, method, endpoint, data=None, json_data=None, require_token=True, token_override=None):
-        """Test a single endpoint"""
+    def _record_manual_failure(self, test_num, name, message):
+        self.log(f"[TEST {test_num}] {name}")
+        self.log(f"  x FAIL - {message}\n")
+        self.failed += 1
+
+    def _build_headers(self, token=None):
+        headers = {"Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
+    def _safe_payload(self, response):
         try:
-            url = f"{BASE_URL}{endpoint}"
-            headers = {}
-            
-            if require_token:
-                active_token = token_override or self.token
-                if active_token:
-                    headers["Authorization"] = f"Bearer {active_token}"
+            return response.json()
+        except ValueError:
+            return response.text
 
-            if method == "GET":
-                response = requests.get(url, headers=headers, timeout=TIMEOUT)
-            elif method == "POST":
-                if data:
-                    # Form-data request
-                    response = requests.post(url, headers=headers, data=data, timeout=TIMEOUT)
-                elif json_data:
-                    # JSON request
-                    response = requests.post(url, headers=headers, json=json_data, timeout=TIMEOUT)
-                else:
-                    response = requests.post(url, headers=headers, json={}, timeout=TIMEOUT)
-            elif method == "PUT":
-                response = requests.put(url, headers=headers, json=json_data, timeout=TIMEOUT)
-            else:
-                self.log(f"[TEST {test_num}] {name}")
-                self.log(f"  ✗ FAIL - Unknown method: {method}\n")
-                self.failed += 1
-                return None
+    def _request(self, method, endpoint, token=None, data=None, json_data=None, params=None):
+        headers = self._build_headers(token=token)
 
-            if response.status_code < 400:
-                self.log(f"[TEST {test_num}] {name}")
-                self.log(f"  ✓ PASS - Status: {response.status_code}")
-                try:
-                    resp_data = response.json()
-                    self.log(f"  Response: {json.dumps(resp_data, indent=2)}\n")
-                    self.passed += 1
-                    return resp_data
-                except:
-                    self.log(f"  Response: {response.text}\n")
-                    self.passed += 1
-                    return response.text
-            else:
-                self.log(f"[TEST {test_num}] {name}")
-                self.log(f"  ✗ FAIL - Status: {response.status_code}")
-                self.log(f"  Error: {response.text}\n")
-                self.failed += 1
-                return None
+        if method in {"POST", "PUT"}:
+            if data is not None:
+                return requests.request(
+                    method,
+                    f"{BASE_URL}{endpoint}",
+                    headers=headers,
+                    data=data,
+                    params=params,
+                    timeout=TIMEOUT,
+                )
 
-        except Exception as e:
-            self.log(f"[TEST {test_num}] {name}")
-            self.log(f"  ✗ FAIL - Exception: {str(e)}\n")
+            return requests.request(
+                method,
+                f"{BASE_URL}{endpoint}",
+                headers=headers,
+                json=json_data if json_data is not None else {},
+                params=params,
+                timeout=TIMEOUT,
+            )
+
+        return requests.request(
+            method,
+            f"{BASE_URL}{endpoint}",
+            headers=headers,
+            params=params,
+            timeout=TIMEOUT,
+        )
+
+    def test_endpoint(
+        self,
+        test_num,
+        name,
+        method,
+        endpoint,
+        token=None,
+        data=None,
+        json_data=None,
+        params=None,
+        expected_statuses=None,
+    ):
+        self.log(f"[TEST {test_num}] {name}")
+
+        try:
+            response = self._request(
+                method=method,
+                endpoint=endpoint,
+                token=token,
+                data=data,
+                json_data=json_data,
+                params=params,
+            )
+        except Exception as request_error:
+            self.log(f"  x FAIL - Exception: {request_error}\n")
             self.failed += 1
             return None
 
-    def run_all_tests(self):
-        """Run all 16 API tests"""
-        self.log("=" * 60)
-        self.log("DOCTOR SCHEDULER BACKEND - COMPREHENSIVE API TEST SUITE")
-        self.log("=" * 60 + "\n")
+        payload = self._safe_payload(response)
 
-        # TEST 1: Signup
-        email = f"test{datetime.now().timestamp()}@gmail.com"
-        resp = self.test_endpoint(
-            1, "POST /auth/signup", "POST", "/auth/signup",
-            json_data={
-                "name": "Test User",
-                "email": email,
-                "password": "123456",
-                "role": "patient"
-            },
-            require_token=False
-        )
-        if resp and "user_id" in resp:
-            self.patient_id = resp["user_id"]
+        if expected_statuses is None:
+            success = 200 <= response.status_code < 300
+            expected_label = "2xx"
+        else:
+            allowed = set(expected_statuses)
+            success = response.status_code in allowed
+            expected_label = "/".join(str(code) for code in expected_statuses)
 
-        # TEST 2: Login
-        resp = self.test_endpoint(
-            2, "POST /auth/login", "POST", "/auth/login",
-            json_data={
-                "email": email,
-                "password": "123456"
-            },
-            require_token=False
-        )
-        if resp and "token" in resp:
-            self.token = resp["token"]
-            self.patient_id = resp["user"].get("patient_id") or resp["user"]["id"]
-            self.log(f"  Token acquired: {self.token[:30]}...\n")
+        if success:
+            self.passed += 1
+            self.log(f"  + PASS - Status: {response.status_code} (expected {expected_label})")
+        else:
+            self.failed += 1
+            self.log(f"  x FAIL - Status: {response.status_code} (expected {expected_label})")
 
-        # Admin setup (needed for admin-only status updates)
-        admin_email = f"admin{datetime.now().timestamp()}@gmail.com"
+        if isinstance(payload, (dict, list)):
+            self.log(f"  Response: {json.dumps(payload, indent=2)}\n")
+        else:
+            self.log(f"  Response: {payload}\n")
+
+        return payload if success else None
+
+    def _run_auth_tests(self):
+        timestamp = int(datetime.now().timestamp())
+        patient_email = f"patient{timestamp}@gmail.com"
+        admin_email = f"admin{timestamp}@gmail.com"
+
         self.test_endpoint(
-            "2A", "POST /auth/signup (admin)", "POST", "/auth/signup",
+            1,
+            "POST /auth/signup (patient)",
+            "POST",
+            "/auth/signup",
+            json_data={
+                "name": "Patient User",
+                "email": patient_email,
+                "password": "123456",
+                "role": "patient",
+                "contact": "9876543210",
+                "dob": "1998-08-15",
+                "gender": "Female",
+            },
+        )
+
+        patient_login = self.test_endpoint(
+            2,
+            "POST /auth/login (patient)",
+            "POST",
+            "/auth/login",
+            json_data={"email": patient_email, "password": "123456"},
+        )
+        if patient_login:
+            self.token = patient_login.get("token")
+            user_obj = patient_login.get("user", {})
+            self.patient_id = user_obj.get("patient_id")
+
+        self.test_endpoint(
+            3,
+            "GET /auth/me (patient)",
+            "GET",
+            "/auth/me",
+            token=self.token,
+        )
+
+        self.test_endpoint(
+            4,
+            "POST /auth/signup (admin)",
+            "POST",
+            "/auth/signup",
             json_data={
                 "name": "Admin User",
                 "email": admin_email,
                 "password": "123456",
-                "role": "admin"
+                "role": "admin",
             },
-            require_token=False
         )
 
-        admin_login_resp = self.test_endpoint(
-            "2B", "POST /auth/login (admin)", "POST", "/auth/login",
+        admin_login = self.test_endpoint(
+            5,
+            "POST /auth/login (admin)",
+            "POST",
+            "/auth/login",
+            json_data={"email": admin_email, "password": "123456"},
+        )
+        if admin_login:
+            self.admin_token = admin_login.get("token")
+
+    def _run_doctor_and_schedule_tests(self):
+        doctor_email = f"dr.ravi.api.{int(datetime.now().timestamp())}@example.com"
+
+        doctor_resp = self.test_endpoint(
+            6,
+            "POST /doctors",
+            "POST",
+            "/doctors",
+            token=self.admin_token,
+            data={
+                "name": "Dr Ravi API",
+                "email": doctor_email,
+                "speciality": self.speciality,
+                "mode": self.mode,
+                "fee": "600",
+                "active": "true",
+                "meeting_link": "https://meet.google.com/dr-ravi-api-room",
+            },
+        )
+        if doctor_resp:
+            self.doctor_id = doctor_resp.get("id")
+
+        self.test_endpoint(
+            7,
+            "GET /specialties",
+            "GET",
+            "/specialties",
+            token=self.admin_token,
+        )
+
+        self.test_endpoint(
+            8,
+            "GET /doctors (active)",
+            "GET",
+            "/doctors",
+            token=self.token,
+            params={"active_only": "true"},
+        )
+
+        if self.doctor_id is None:
+            self._record_manual_failure(9, "POST /doctor-schedules", "doctor_id not available")
+            self._record_manual_failure(10, "GET /doctor-schedules", "doctor_id not available")
+            self._record_manual_failure(11, "GET /availability-by-date", "doctor_id not available")
+            self._record_manual_failure(12, "GET /search", "doctor_id not available")
+            self._record_manual_failure(13, "GET /availability-by-date mode mismatch", "doctor_id not available")
+            return
+
+        self.test_endpoint(
+            9,
+            "POST /doctor-schedules",
+            "POST",
+            "/doctor-schedules",
+            token=self.admin_token,
             json_data={
-                "email": admin_email,
-                "password": "123456"
+                "doctor_id": self.doctor_id,
+                "date": self.schedule_date,
+                "start_time": "10:00",
+                "end_time": "11:00",
+                "booked": False,
             },
-            require_token=False
         )
-        if admin_login_resp and "token" in admin_login_resp:
-            self.admin_token = admin_login_resp["token"]
 
-        # TEST 3: Create Doctor (form-data, no image)
-        resp = self.test_endpoint(
-            3, "POST /doctors (form-data)", "POST", "/doctors",
-            data={"name": "Dr Ravi", "speciality": "Cardiology"},
-            require_token=True
-        )
-        if resp and "id" in resp:
-            self.doctor_id = resp["id"]
-
-        # TEST 4: List Doctors
         self.test_endpoint(
-            4, "GET /doctors", "GET", "/doctors",
-            require_token=True
+            10,
+            "GET /doctor-schedules",
+            "GET",
+            "/doctor-schedules",
+            token=self.admin_token,
+            params={
+                "doctor_id": self.doctor_id,
+                "date": self.schedule_date,
+                "include_booked": "false",
+            },
         )
 
-        # TEST 5: Create Clinic (form-data)
-        resp = self.test_endpoint(
-            5, "POST /clinics (form-data)", "POST", "/clinics",
-            data={"name": "City Clinic", "location": "Hyderabad"},
-            require_token=True
+        availability = self.test_endpoint(
+            11,
+            "GET /availability-by-date",
+            "GET",
+            "/availability-by-date",
+            token=self.token,
+            params={
+                "doctor_id": self.doctor_id,
+                "date": self.schedule_date,
+                "mode": self.mode,
+            },
         )
-        if resp and "id" in resp:
-            self.clinic_id = resp["id"]
 
-        # TEST 6: List Clinics
+        if availability and availability.get("available_slots"):
+            first_slot = availability["available_slots"][0]
+            self.available_schedule_id = first_slot.get("schedule_id")
+
         self.test_endpoint(
-            6, "GET /clinics", "GET", "/clinics",
-            require_token=True
+            12,
+            "GET /search",
+            "GET",
+            "/search",
+            token=self.token,
+            params={"speciality": self.speciality, "mode": self.mode, "active_only": "true"},
         )
 
-        # TEST 7: Map Doctor to Clinic
-        if self.doctor_id and self.clinic_id:
-            self.test_endpoint(
-                7, "POST /doctor-clinic", "POST", "/doctor-clinic",
-                json_data={
-                    "doctor_id": self.doctor_id,
-                    "clinic_id": self.clinic_id
-                },
-                require_token=True
-            )
-
-        # TEST 8: Create Availability
-        if self.doctor_id and self.clinic_id:
-            # Create availability for multiple days
-            days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            for day in days:
-                self.test_endpoint(
-                    8, f"POST /availability ({day})", "POST", "/availability",
-                    json_data={
-                        "doctor_id": self.doctor_id,
-                        "clinic_id": self.clinic_id,
-                        "day": day,
-                        "start_time": "09:00",
-                        "end_time": "14:00"
-                    },
-                    require_token=True
-                )
-
-        # TEST 9: Get Availability
-        if self.doctor_id:
-            self.test_endpoint(
-                9, "GET /availability", "GET", f"/availability?doctor_id={self.doctor_id}",
-                require_token=True
-            )
-
-        # TEST 10: Search Doctors
+        wrong_mode = "offline" if self.mode == "online" else "online"
         self.test_endpoint(
-            10, "GET /search", "GET", "/search?speciality=Cardiology",
-            require_token=True
+            13,
+            "GET /availability-by-date (mode mismatch -> 400)",
+            "GET",
+            "/availability-by-date",
+            token=self.token,
+            params={
+                "doctor_id": self.doctor_id,
+                "date": self.schedule_date,
+                "mode": wrong_mode,
+            },
+            expected_statuses=[400],
         )
 
-        # TEST 11: Get Availability by Date
-        if self.doctor_id:
-            self.future_booking_date = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
-            self.test_endpoint(
-                11, "GET /availability-by-date", "GET", 
-                f"/availability-by-date?doctor_id={self.doctor_id}&date={self.future_booking_date}",
-                require_token=True
-            )
+    def _run_appointment_tests(self):
+        if self.doctor_id is None or self.available_schedule_id is None:
+            self._record_manual_failure(14, "POST /appointments", "doctor_id or schedule_id missing")
+            self._record_manual_failure(15, "POST /appointments mode mismatch", "doctor_id or schedule_id missing")
+            self._record_manual_failure(16, "GET /appointments (patient)", "booking preconditions failed")
+            self._record_manual_failure(17, "GET /appointments (admin)", "booking preconditions failed")
+            self._record_manual_failure(18, "PUT /appointments/{id}/status", "appointment_id missing")
+            return
 
-        # TEST 12: Create Appointment
-        if self.patient_id and self.doctor_id and self.clinic_id and self.future_booking_date:
-            resp = self.test_endpoint(
-                12, "POST /appointments", "POST", "/appointments",
-                json_data={
-                    "patient_id": self.patient_id,
-                    "doctor_id": self.doctor_id,
-                    "clinic_id": self.clinic_id,
-                    "date": self.future_booking_date,
-                    "time": "10:00"
-                },
-                require_token=True
-            )
-            if resp and "appointment_id" in resp:
-                self.appointment_id = resp["appointment_id"]
+        appointment_resp = self.test_endpoint(
+            14,
+            "POST /appointments",
+            "POST",
+            "/appointments",
+            token=self.token,
+            json_data={
+                "doctor_id": self.doctor_id,
+                "schedule_id": self.available_schedule_id,
+                "mode": self.mode,
+            },
+        )
+        if appointment_resp:
+            self.appointment_id = appointment_resp.get("appointment_id")
 
-        # TEST 13: Get Appointments
-        if self.patient_id:
-            self.test_endpoint(
-                13, "GET /appointments", "GET", f"/appointments?patient_id={self.patient_id}",
-                require_token=True
-            )
+        wrong_mode = "offline" if self.mode == "online" else "online"
+        self.test_endpoint(
+            15,
+            "POST /appointments (mode mismatch -> 400)",
+            "POST",
+            "/appointments",
+            token=self.token,
+            json_data={
+                "doctor_id": self.doctor_id,
+                "schedule_id": self.available_schedule_id,
+                "mode": wrong_mode,
+            },
+            expected_statuses=[400],
+        )
 
-        # TEST 14: Update Appointment Status
-        if self.appointment_id:
-            self.test_endpoint(
-                14, "PUT /appointments/{id}", "PUT", f"/appointments/{self.appointment_id}",
-                json_data={"status": "COMPLETED"},
-                require_token=True,
-                token_override=self.admin_token
-            )
+        self.test_endpoint(
+            16,
+            "GET /appointments (patient)",
+            "GET",
+            "/appointments",
+            token=self.token,
+        )
 
-        # TEST 15: Create Leave
-        if self.doctor_id:
-            self.test_endpoint(
-                15, "POST /leaves", "POST", "/leaves",
-                json_data={
-                    "doctor_id": self.doctor_id,
-                    "start_date": "2026-04-10",
-                    "end_date": "2026-04-11",
-                    "reason": "Sick Leave"
-                },
-                require_token=True
-            )
+        self.test_endpoint(
+            17,
+            "GET /appointments (admin)",
+            "GET",
+            "/appointments",
+            token=self.admin_token,
+            params={"patient_id": self.patient_id},
+        )
 
-        # TEST 16: Get Utilization
-        if self.clinic_id:
-            self.test_endpoint(
-                16, "GET /utilization", "GET", f"/utilization?clinic_id={self.clinic_id}",
-                require_token=True
-            )
+        if self.appointment_id is None:
+            self._record_manual_failure(18, "PUT /appointments/{id}/status", "appointment_id missing")
+            return
 
-        # Summary
-        self.log("\n" + "=" * 60)
-        self.log("TEST SUMMARY")
-        self.log("=" * 60)
-        self.log(f"PASSED: {self.passed}/16")
-        self.log(f"FAILED: {self.failed}/16")
-        self.log(f"Success Rate: {(self.passed/16)*100:.1f}%")
-        
+        self.test_endpoint(
+            18,
+            "PUT /appointments/{id}/status",
+            "PUT",
+            f"/appointments/{self.appointment_id}/status",
+            token=self.admin_token,
+            json_data={"status": "COMPLETED"},
+        )
+
+    def _run_dashboard_tests(self):
+        self.test_endpoint(
+            19,
+            "GET /dashboard/daily-summary",
+            "GET",
+            "/dashboard/daily-summary",
+            token=self.admin_token,
+            params={"date": self.schedule_date},
+        )
+
+        self.test_endpoint(
+            20,
+            "GET /dashboard/daily-summary (mode filtered)",
+            "GET",
+            "/dashboard/daily-summary",
+            token=self.admin_token,
+            params={"date": self.schedule_date, "mode": self.mode},
+        )
+
+    def _print_summary(self):
+        total_checks = self.passed + self.failed
+        success_rate = (self.passed / total_checks * 100) if total_checks else 0
+
+        self.log("\n" + "=" * 64)
+        self.log("DOCTOR SCHEDULER V2 - TEST SUMMARY")
+        self.log("=" * 64)
+        self.log(f"EXECUTED CHECKS: {total_checks}")
+        self.log(f"PASSED: {self.passed}/{total_checks}")
+        self.log(f"FAILED: {self.failed}/{total_checks}")
+        self.log(f"Success Rate: {success_rate:.1f}%")
+
         if self.failed == 0:
-            self.log("\n✓ ALL TESTS PASSED! API IS FULLY FUNCTIONAL")
+            self.log("\n+ ALL TESTS PASSED")
         else:
-            self.log(f"\n✗ {self.failed} test(s) failed - see details above")
-        
-        self.log("=" * 60)
+            self.log(f"\n! {self.failed} test(s) failed")
 
+        self.log("=" * 64)
         return self.failed == 0
+
+    def run_all_tests(self):
+        self.log("=" * 64)
+        self.log("DOCTOR SCHEDULER BACKEND - COMPREHENSIVE API TEST SUITE (V2)")
+        self.log("=" * 64 + "\n")
+
+        self._run_auth_tests()
+        self._run_doctor_and_schedule_tests()
+        self._run_appointment_tests()
+        self._run_dashboard_tests()
+
+        return self._print_summary()
+
 
 if __name__ == "__main__":
     tester = APITester()

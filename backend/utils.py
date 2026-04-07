@@ -1,5 +1,8 @@
 import os
+import secrets
+import smtplib
 from datetime import date, datetime, time, timedelta
+from email.message import EmailMessage
 from typing import Optional
 
 import cloudinary
@@ -132,3 +135,36 @@ def is_future_datetime(date_value: date, time_value: str) -> bool:
 
 def get_weekday_name(date_value: date) -> str:
     return date_value.strftime("%A")
+
+
+def generate_video_link(doctor_id: int, schedule_id: int) -> str:
+    base_url = os.getenv("VIDEO_LINK_BASE_URL", "https://meet.doctorscheduler.app/session")
+    token = secrets.token_urlsafe(10)
+    return f"{base_url}/{doctor_id}-{schedule_id}-{token}"
+
+
+def send_appointment_confirmation_email(to_email: str, subject: str, body: str) -> bool:
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = os.getenv("SMTP_PORT")
+    smtp_user = os.getenv("SMTP_USERNAME")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    sender = os.getenv("EMAIL_FROM", smtp_user)
+
+    if not smtp_host or not smtp_port or not sender:
+        return False
+
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = to_email
+    message["Subject"] = subject
+    message.set_content(body)
+
+    try:
+        with smtplib.SMTP(smtp_host, int(smtp_port), timeout=10) as smtp:
+            smtp.starttls()
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+        return True
+    except Exception:
+        return False
